@@ -1,11 +1,11 @@
 # Brightness Gesture
 
-An LSPosed module that adds a horizontal swipe gesture on the status bar to control screen brightness.
+An LSPosed module that adds a horizontal swipe gesture on the status bar to control screen brightness. Built with a modern Material You interface that adapts to your wallpaper colors.
 
 ## Features
 
 - Swipe left/right on the status bar to adjust brightness
-- Brightness indicator pill with customizable color, opacity, text color, and vertical position
+- Brightness indicator pill with customizable color (including Material You), opacity, text color, and vertical position
 - Auto-brightness toggle via in-app switch or Quick Settings tile
 - Saves and restores manual brightness when toggling auto-brightness
 - Configurable sensitivity and edge padding
