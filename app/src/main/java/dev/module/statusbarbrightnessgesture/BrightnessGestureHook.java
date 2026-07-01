@@ -17,6 +17,7 @@ import android.os.Looper;
 import android.view.Display;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowInsets;
 import android.view.WindowManager;
@@ -61,12 +62,15 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private static final int GAMMA_SPACE_MAX = 65535;
     private static final float STATUS_BAR_Y_FRACTION = 0.06f;
     private static final float GAMMA = 2.2f;
+    // Exponent applied to finger position when mapping to the brightness float. 1.0 = linear.
+    private static final float BRIGHTNESS_CURVE = 2.2f;
     private static final long INDICATOR_DISMISS_DELAY_MS = 800;
 
     // ── Per-gesture state ─────────────────────────────────────────────────────
 
     private float mDownX;
     private float mDownY;
+    private float mLastTargetBrightness = -1f;
     private boolean mGestureActive = false;
     private boolean mTouchStartedInStatusBar = false;
 
@@ -133,9 +137,17 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private android.view.View mStatusBarView;
     private android.view.View mShadeWindowView;        // NotificationShadeWindowView reference
     private volatile boolean mSendingCancel = false;   // true while dispatching synthetic CANCEL to shade
+    // true from DOWN until 200ms after UP (or until gesture confirmed vertical);
+    // used by the shade-expansion hook to suppress QS during brightness gestures.
+    private volatile boolean mSuppressShadeExpand = false;
+    private final Runnable mClearSuppressShadeExpand = () -> mSuppressShadeExpand = false;
     private android.view.View mFullscreenTouchView;   // insets probe only — always FLAG_NOT_TOUCHABLE
     private WindowManager.LayoutParams mFullscreenTouchParams;
     private boolean mFullscreenTouchAttached = false;
+    // Updated asynchronously by an insets listener so isStatusBarHidden() never has to make
+    // a synchronous getRootWindowInsets() call on the touch-dispatch path (that call added
+    // enough latency to lose the race against the ROM's own edge-swipe gesture monitor).
+    private volatile boolean mCachedSbHidden = false;
     private Object mInputMonitor;                      // android.view.InputMonitor (reflection)
     private android.view.InputEventReceiver mGestureReceiver;
     private Context mOverlayContext;                   // SystemUI context for InputManager access
@@ -162,6 +174,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 lpparam.classLoader, hookMethodFn, false);
         hookAttachedToWindow(PHONE_STATUS_BAR_VIEW,
                 lpparam.classLoader, hookMethodFn);
+        suppressShadeExpansion(lpparam.classLoader, hookMethodFn);
     }
 
     // ── Runtime reflection to find LSPosed's real hookMethod ──────────────────
@@ -400,7 +413,18 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         }
                     }
                     if (!mGestureEnabled) return;
-                    if (handleTouchEvent(ev, isStatusBarView)) {
+                    // Capture before handleTouchEvent mutates it — reflects whether a real
+                    // brightness drag was already underway going into this event.
+                    boolean wasGestureActive = mGestureActive;
+                    boolean handled = handleTouchEvent(ev, isStatusBarView);
+                    // While suppress is armed AND an actual drag is in progress, also consume
+                    // the shade window's top-strip events so the ROM's own re-expansion timer
+                    // can't reopen the shade mid-drag. Plain taps (no drag ever starts) are
+                    // left alone so they still reach the app underneath.
+                    boolean inTopStrip = ev.getY() <= mScreenHeight * STATUS_BAR_Y_FRACTION;
+                    boolean consume = handled || (mSuppressShadeExpand
+                            && (isStatusBarView || (inTopStrip && wasGestureActive)));
+                    if (consume) {
                         param.setResult(true);
                     }
                 }
@@ -774,6 +798,30 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 Math.round((float) Math.pow(n, 1.0 / GAMMA) * 100f)));
     }
 
+    // Suppress ShadeControllerImpl.instantExpandShade while a brightness gesture is in
+    // progress, so a horizontal swipe on the status bar can't also fling the shade open.
+    // (The bottom-edge fullscreen swipe-up path is handled separately by collapsing the
+    // shade after the ROM opens it — see cancelShadeGesture/collapseShadeIfOpen.)
+    private void suppressShadeExpansion(ClassLoader cl, Method hookMethodFn) {
+        try {
+            Class<?> c = Class.forName(
+                    "com.android.systemui.shade.ShadeControllerImpl", false, cl);
+            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                if (!m.getName().equalsIgnoreCase("instantExpandShade")) continue;
+                if (m.getReturnType() != void.class) continue;
+                m.setAccessible(true);
+                hookMethodFn.invoke(null, m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (mSuppressShadeExpand) param.setResult(null);
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": suppressShadeExpansion failed: " + t);
+        }
+    }
+
     private void hideIndicator() {
         if (mIndicatorView == null || mWindowManager == null || mMainHandler == null) return;
         mMainHandler.removeCallbacks(mDismissIndicator);
@@ -821,16 +869,28 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private boolean onDown(MotionEvent ev, boolean isStatusBarView) {
         mGestureActive = false;
         mTouchStartedInStatusBar = false;
+        mLastTargetBrightness = -1f;
+        // Cancel any delayed clear from the previous gesture, then reset the flag fresh.
+        if (mMainHandler != null) mMainHandler.removeCallbacks(mClearSuppressShadeExpand);
+        mSuppressShadeExpand = false;
         boolean inRegion = isStatusBarView
                 || (ev.getY() <= mScreenHeight * STATUS_BAR_Y_FRACTION);
         if (!inRegion) return false;
         mTouchStartedInStatusBar = true;
         mDownX = ev.getX();
         mDownY = ev.getY();
-        // Consuming DOWN on the status bar view stops the GestureDetector inside
-        // onTouchEvent from seeing it, which prevents the long-press-to-QS timer.
-        // The shade-swipe gesture is unaffected (it tracks at the window level).
-        if (isStatusBarView && mBlockLongPressQS) return true;
+        if (isStatusBarView) {
+            boolean sbHidden = isStatusBarHidden();
+            boolean blockForFullscreen = mFullscreenSwipe && sbHidden;
+            if (blockForFullscreen) mSuppressShadeExpand = true;
+            // Consuming DOWN skips the original onTouchEvent, which is what feeds the ROM's
+            // long-press-to-QS GestureDetector — so we only do it when the user has enabled
+            // long-press blocking, or when we need to suppress shade expansion for a
+            // fullscreen/peek swipe. Otherwise let the original run so long-press and QS
+            // pull-down behave natively; the status bar returns true for DOWN, so we still
+            // receive MOVE/UP and start the brightness gesture on horizontal movement.
+            return mBlockLongPressQS || blockForFullscreen;
+        }
         return false;
     }
 
@@ -839,7 +899,13 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         float absDX = Math.abs(ev.getX() - mDownX);
         float absDY = Math.abs(ev.getY() - mDownY);
         if (!mGestureActive) {
-            if (absDX <= mGestureSlopPx || absDX <= absDY * mHorizontalRatio) return false;
+            // Clearly vertical → this is an intentional QS swipe; let the shade open.
+            if (mSuppressShadeExpand && absDY > mGestureSlopPx && absDY > absDX) {
+                mSuppressShadeExpand = false;
+            }
+            if (absDX <= mGestureSlopPx || absDX <= absDY * mHorizontalRatio) {
+                return false;
+            }
             mGestureActive = true;
             cancelShadeGesture(ev.getDownTime());
             if (mHapticEnabled && mStatusBarView != null) {
@@ -854,25 +920,54 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     }
 
     private void cancelShadeGesture(long downTime) {
-        if (mShadeWindowView == null || mMainHandler == null) return;
-        mMainHandler.post(() -> {
-            if (mShadeWindowView == null) return;
-            mSendingCancel = true;
-            MotionEvent cancel = MotionEvent.obtain(
-                    downTime, android.os.SystemClock.uptimeMillis(),
-                    MotionEvent.ACTION_CANCEL, mDownX, mDownY, 0);
-            try { mShadeWindowView.dispatchTouchEvent(cancel); }
-            catch (Throwable ignored) {}
-            cancel.recycle();
-            mSendingCancel = false;
-        });
+        if (mMainHandler == null) return;
+        // Send ACTION_CANCEL to abort any in-progress drag gesture in the shade window.
+        if (mShadeWindowView != null) {
+            mMainHandler.post(() -> {
+                if (mShadeWindowView == null) return;
+                mSendingCancel = true;
+                MotionEvent cancel = MotionEvent.obtain(
+                        downTime, android.os.SystemClock.uptimeMillis(),
+                        MotionEvent.ACTION_CANCEL, mDownX, mDownY, 0);
+                try { mShadeWindowView.dispatchTouchEvent(cancel); }
+                catch (Throwable ignored) {}
+                cancel.recycle();
+                mSendingCancel = false;
+            });
+        }
+        // The ROM's swipe-up monitor calls makeExpandedVisible ~100ms after DOWN.
+        // Schedule a collapse so it fires after the shade has opened, regardless of
+        // whether the brightness threshold was crossed before or after that timer.
+        long elapsed = android.os.SystemClock.uptimeMillis() - downTime;
+        long delay = Math.max(10, 160 - elapsed);
+        mMainHandler.postDelayed(this::collapseShadeIfOpen, delay);
+    }
+
+    private void collapseShadeIfOpen() {
+        try {
+            Context ctx = mOverlayContext != null ? mOverlayContext : mContext;
+            if (ctx == null) return;
+            Object sbm = ctx.getSystemService(Context.STATUS_BAR_SERVICE);
+            if (sbm == null) return;
+            sbm.getClass().getMethod("collapsePanels").invoke(sbm);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": collapseShade failed: " + t);
+        }
     }
 
     private boolean onUpOrCancel(MotionEvent ev) {
+        // Delay the clear so the swipe-up monitor's ~100ms deferred expansion still sees
+        // the flag set, even if the finger lifted before the expansion fired.
+        if (mMainHandler != null) {
+            mMainHandler.removeCallbacks(mClearSuppressShadeExpand);
+            mMainHandler.postDelayed(mClearSuppressShadeExpand, 200);
+        } else {
+            mSuppressShadeExpand = false;
+        }
         if (!mGestureActive) { mTouchStartedInStatusBar = false; return false; }
         boolean cancelled = ev.getActionMasked() == MotionEvent.ACTION_CANCEL;
-        float finalBrightness = cancelled
-                ? getCurrentBrightness()
+        float finalBrightness = cancelled && mLastTargetBrightness >= 0
+                ? mLastTargetBrightness
                 : computeBrightness(ev.getX());
         setTemporaryBrightness(finalBrightness);
         commitBrightness(finalBrightness);
@@ -891,10 +986,12 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         float fraction = usable <= 0
                 ? Math.max(0f, Math.min(1f, fingerX / mScreenWidth))
                 : Math.max(0f, Math.min(1f, (fingerX - mEdgePaddingPx) / usable));
-        float gammaCorrected = (float) Math.pow(fraction, GAMMA);
+        // Finger position raised to BRIGHTNESS_CURVE before mapping to the brightness float.
+        // Settled on 2.2 (the original author's value) after trying linear and 1.3.
+        float curved = (float) Math.pow(fraction, BRIGHTNESS_CURVE);
         return Math.max(mBrightnessMin,
                 Math.min(mBrightnessMax,
-                        mBrightnessMin + gammaCorrected * (mBrightnessMax - mBrightnessMin)));
+                        mBrightnessMin + curved * (mBrightnessMax - mBrightnessMin)));
     }
 
     // ── Hidden API calls ──────────────────────────────────────────────────────
@@ -904,6 +1001,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         try { mSetTemporaryBrightnessMethod.invoke(
                 mDisplayManager, Display.DEFAULT_DISPLAY, brightness); }
         catch (Throwable t) { XposedBridge.log(TAG + ": setTemporaryBrightness: " + t); }
+        mLastTargetBrightness = brightness;
     }
 
     private void commitBrightness(float brightness) {
@@ -937,15 +1035,25 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             // return false, but this overlay correctly reflects the global inset state.
             mOverlayContext = context;
             android.view.View probeView = new android.view.View(context);
+            // 1px tall on purpose: window insets are global to the window, so a minimal
+            // probe reports the same status-bar visibility as a full-size one. A tall
+            // overlay would sit over the app's top toolbar and — even though it's
+            // FLAG_NOT_TOUCHABLE — cause Android to flag touches underneath as OBSCURED,
+            // which security-conscious views (toolbar buttons) discard. Keeping it 1px
+            // means it only covers the very top edge, never the app's tappable content.
             WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
-                    (int)(64 * mDensity),
+                    1,
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                             | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                             | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
                     PixelFormat.TRANSPARENT);
             params.gravity = Gravity.TOP | Gravity.START;
+            probeView.setOnApplyWindowInsetsListener((v, insets) -> {
+                mCachedSbHidden = !insets.isVisible(WindowInsets.Type.statusBars());
+                return insets;
+            });
             mFullscreenTouchView   = probeView;
             mFullscreenTouchParams = params;
             updateFullscreenTouch();
@@ -958,12 +1066,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     // Queried from our app-level overlay window so the insets reflect the real state,
     // not SystemUI's internal perspective (which always "owns" the bar).
     private boolean isStatusBarHidden() {
-        if (!mFullscreenTouchAttached) return false;
-        try {
-            if (!mFullscreenTouchView.isAttachedToWindow()) return false;
-            WindowInsets wi = mFullscreenTouchView.getRootWindowInsets();
-            return wi != null && !wi.isVisible(WindowInsets.Type.statusBars());
-        } catch (Throwable t) { return false; }
+        return mFullscreenTouchAttached && mCachedSbHidden;
     }
 
     // Height of the top strip to monitor for the fullscreen brightness gesture.
@@ -994,55 +1097,23 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 @Override
                 public void onInputEvent(android.view.InputEvent event) {
                     try {
-                        if (event instanceof MotionEvent
-                                && mGestureEnabled && mFullscreenSwipe
-                                && isStatusBarHidden()) {
+                        // The gesture monitor is ONLY needed when the status bar is genuinely
+                        // hidden (true fullscreen). In normal apps the status bar is visible and
+                        // the SBV hook already owns that region — processing here too would
+                        // double-handle shared gesture state and interfere with taps reaching
+                        // the app below. So stay completely dormant unless the bar is hidden.
+                        if (event instanceof MotionEvent && mGestureEnabled
+                                && mFullscreenSwipe && isStatusBarHidden()) {
                             MotionEvent me = (MotionEvent) event;
                             int action = me.getActionMasked();
-                            // Only start tracking gestures that begin in the top strip.
-                            // For in-progress gestures, mTouchStartedInStatusBar stays true.
                             boolean inStrip = (action == MotionEvent.ACTION_DOWN)
                                     ? me.getY() <= getStripHeight()
                                     : mTouchStartedInStatusBar;
                             if (inStrip) {
-                                if (action == MotionEvent.ACTION_DOWN) {
-                                    // Post a delayed pilfer that fires before the ROM's
-                                    // long-press-QS timer (~500 ms). If the user swipes
-                                    // clearly downward before then we cancel it so QS can
-                                    // still open; taps cancel it on UP so they pass through.
-                                    mPilferPending = true;
-                                    if (mPilferRunnable != null)
-                                        mMainHandler.removeCallbacks(mPilferRunnable);
-                                    mPilferRunnable = () -> {
-                                        if (mPilferPending) {
-                                            mPilferPending = false;
-                                            try {
-                                                monitor.getClass()
-                                                        .getMethod("pilferPointers")
-                                                        .invoke(monitor);
-                                            } catch (Throwable pt) {
-                                                XposedBridge.log(TAG + ": delayed pilfer failed: " + pt);
-                                            }
-                                        }
-                                    };
-                                    mMainHandler.postDelayed(mPilferRunnable, 200);
-                                } else if (action == MotionEvent.ACTION_UP
-                                        || action == MotionEvent.ACTION_CANCEL) {
-                                    mPilferPending = false;
-                                    if (mPilferRunnable != null) {
-                                        mMainHandler.removeCallbacks(mPilferRunnable);
-                                        mPilferRunnable = null;
-                                    }
-                                }
                                 boolean wasActive = mGestureActive;
                                 handleTouchEvent(me, true);
+
                                 if (!wasActive && mGestureActive) {
-                                    // Brightness threshold crossed — steal immediately.
-                                    mPilferPending = false;
-                                    if (mPilferRunnable != null) {
-                                        mMainHandler.removeCallbacks(mPilferRunnable);
-                                        mPilferRunnable = null;
-                                    }
                                     try {
                                         monitor.getClass()
                                                 .getMethod("pilferPointers")
@@ -1056,8 +1127,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     } catch (Throwable t) {
                         XposedBridge.log(TAG + ": gestureMonitor: " + t);
                     }
-                    // Never mark as consumed — the monitor is a pure observer; pilfering
-                    // is the mechanism for stealing the gesture when we decide to take it.
                     finishInputEvent(event, false);
                 }
             };
