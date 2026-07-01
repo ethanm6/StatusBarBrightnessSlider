@@ -64,6 +64,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private static final float GAMMA = 2.2f;
     // Exponent applied to finger position when mapping to the brightness float. 1.0 = linear.
     private static final float BRIGHTNESS_CURVE = 2.2f;
+    // WindowManager.LayoutParams.TYPE_STATUS_BAR_ADDITIONAL (hidden API) — privileged
+    // SystemUI window type exempt from the 0.8-alpha clamp applied to app overlays.
+    private static final int TYPE_STATUS_BAR_ADDITIONAL = 2041;
     private static final long INDICATOR_DISMISS_DELAY_MS = 800;
 
     // ── Per-gesture state ─────────────────────────────────────────────────────
@@ -552,9 +555,16 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
             initIndicatorPill(context, accent, textCol, d);
 
+            // TYPE_STATUS_BAR_ADDITIONAL (a privileged SystemUI window type) instead of
+            // TYPE_APPLICATION_OVERLAY: since Android 12, a FLAG_NOT_TOUCHABLE application
+            // overlay ("system alert window") gets its alpha force-clamped to 0.8 by the
+            // untrusted-touch mitigation, which made the indicator translucent no matter
+            // what color/alpha we set. Privileged system types are exempt; we run inside
+            // SystemUI, which holds INTERNAL_SYSTEM_WINDOW. showIndicator() falls back to
+            // TYPE_APPLICATION_OVERLAY if the ROM rejects the type.
             mIndicatorParams = new WindowManager.LayoutParams(
                     mIndicatorW, mIndicatorH,
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    TYPE_STATUS_BAR_ADDITIONAL,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                             | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                             | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
@@ -738,7 +748,21 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             if (!mIndicatorAttached) {
                 if (mHideAnimator != null) { mHideAnimator.cancel(); mHideAnimator = null; }
                 mIndicatorParams.y = -mIndicatorH;
-                mWindowManager.addView(mIndicatorView, mIndicatorParams);
+                try {
+                    mWindowManager.addView(mIndicatorView, mIndicatorParams);
+                } catch (Throwable addFail) {
+                    if (mIndicatorParams.type != WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY) {
+                        // ROM rejected the privileged type — fall back to a standard
+                        // overlay (which the system will clamp to 0.8 alpha, but works).
+                        XposedBridge.log(TAG + ": privileged indicator type rejected, "
+                                + "falling back to TYPE_APPLICATION_OVERLAY: " + addFail);
+                        mIndicatorParams.type =
+                                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+                        mWindowManager.addView(mIndicatorView, mIndicatorParams);
+                    } else {
+                        throw addFail;
+                    }
+                }
                 mIndicatorAttached = true;
                 startSlideIn(yOffset, targetAlpha);
             } else {
