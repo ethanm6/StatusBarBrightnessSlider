@@ -142,6 +142,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private volatile int mTextCustomColor       = Prefs.DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR;
     private volatile int mIndicatorYPosition    = Prefs.DEFAULT_INDICATOR_Y_POSITION;
     private volatile boolean mIndicatorShadow   = Prefs.DEFAULT_INDICATOR_SHADOW == 1;
+    private volatile boolean mReverseSlider     = Prefs.DEFAULT_REVERSE_SLIDER == 1;
 
     // ── Fullscreen touch overlay ──────────────────────────────────────────────
 
@@ -243,128 +244,50 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
         // Read persisted state from Settings.Secure on boot — available immediately,
         // no app process needed, survives reboots.
-        // Falls back to true (enabled) if the key doesn't exist yet.
-        try {
-            mGestureEnabled = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_GESTURE_ENABLED, Prefs.DEFAULT_GESTURE_ENABLED) == 1;
-            mOverlayEnabled = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_OVERLAY_ENABLED, Prefs.DEFAULT_OVERLAY_ENABLED) == 1;
-            mBlockLongPressQS = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_BLOCK_LONGPRESS_QS, Prefs.DEFAULT_BLOCK_LONGPRESS_QS) == 1;
-            mFullscreenSwipe = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_FULLSCREEN_SWIPE, Prefs.DEFAULT_FULLSCREEN_SWIPE) == 1;
-            mHapticEnabled = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_HAPTIC_FEEDBACK, Prefs.DEFAULT_HAPTIC_FEEDBACK) == 1;
-            mSensitivity = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_SENSITIVITY, Prefs.DEFAULT_SENSITIVITY);
-            mEdgePaddingDp = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_EDGE_PADDING_DP, Prefs.DEFAULT_EDGE_PADDING_DP);
-            mIndicatorColorMode = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_INDICATOR_COLOR_MODE, Prefs.DEFAULT_INDICATOR_COLOR_MODE);
-            mIndicatorCustomColor = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_INDICATOR_CUSTOM_COLOR, Prefs.DEFAULT_INDICATOR_CUSTOM_COLOR);
-            mIndicatorAlpha = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_INDICATOR_ALPHA, Prefs.DEFAULT_INDICATOR_ALPHA);
-            mTextColorMode = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_INDICATOR_TEXT_COLOR_MODE, Prefs.DEFAULT_INDICATOR_TEXT_COLOR_MODE);
-            mTextCustomColor = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_INDICATOR_TEXT_CUSTOM_COLOR, Prefs.DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR);
-            mIndicatorYPosition = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_INDICATOR_Y_POSITION, Prefs.DEFAULT_INDICATOR_Y_POSITION);
-            mIndicatorShadow = Settings.Secure.getInt(context.getContentResolver(),
-                    Prefs.KEY_INDICATOR_SHADOW, Prefs.DEFAULT_INDICATOR_SHADOW) == 1;
-            applyTuning();
-            XposedBridge.log(TAG + ": boot state from Settings.Secure — gesture="
-                    + mGestureEnabled + " overlay=" + mOverlayEnabled
-                    + " blockLongPress=" + mBlockLongPressQS
-                    + " fullscreenSwipe=" + mFullscreenSwipe
-                    + " sensitivity=" + mSensitivity + " edgePaddingDp=" + mEdgePaddingDp);
-        } catch (Throwable t) {
-            mGestureEnabled   = true;
-            mOverlayEnabled    = true;
-            mBlockLongPressQS = false;
-            mFullscreenSwipe  = false;
-            mSensitivity   = Prefs.DEFAULT_SENSITIVITY;
-            mEdgePaddingDp = Prefs.DEFAULT_EDGE_PADDING_DP;
-            applyTuning();
-            XposedBridge.log(TAG + ": Settings.Secure read failed, defaulting: " + t);
-        }
+        loadPrefsFromSecure(context);
 
-        // Broadcast receiver for live updates when user changes a toggle
+        // Broadcast receiver for live updates when the user changes a setting.
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context ctx, Intent intent) {
-                if (Intent.ACTION_CONFIGURATION_CHANGED.equals(intent.getAction())) {
+                String action = intent.getAction();
+                if (Intent.ACTION_CONFIGURATION_CHANGED.equals(action)) {
                     if (isSystemColorMode(mIndicatorColorMode) || isSystemTextColorMode(mTextColorMode)) reinitIndicator();
                     return;
                 }
-                if (!Prefs.ACTION_PREFS_CHANGED.equals(intent.getAction())) return;
-                boolean prevGesture = mGestureEnabled;
-                mGestureEnabled   = intent.getBooleanExtra(Prefs.KEY_GESTURE_ENABLED, true);
-                mOverlayEnabled    = intent.getBooleanExtra(Prefs.KEY_OVERLAY_ENABLED,  true);
-                mBlockLongPressQS = intent.getBooleanExtra(Prefs.KEY_BLOCK_LONGPRESS_QS, false);
-                mFullscreenSwipe  = intent.getBooleanExtra(Prefs.KEY_FULLSCREEN_SWIPE, false);
-                mHapticEnabled    = intent.getBooleanExtra(Prefs.KEY_HAPTIC_FEEDBACK, false);
-                mSensitivity = intent.getIntExtra(
-                        Prefs.KEY_SENSITIVITY, Prefs.DEFAULT_SENSITIVITY);
-                mEdgePaddingDp = intent.getIntExtra(
-                        Prefs.KEY_EDGE_PADDING_DP, Prefs.DEFAULT_EDGE_PADDING_DP);
 
-                int newColorMode     = intent.getIntExtra(Prefs.KEY_INDICATOR_COLOR_MODE, Prefs.DEFAULT_INDICATOR_COLOR_MODE);
-                int newCustom        = intent.getIntExtra(Prefs.KEY_INDICATOR_CUSTOM_COLOR, Prefs.DEFAULT_INDICATOR_CUSTOM_COLOR);
-                int newAlpha         = intent.getIntExtra(Prefs.KEY_INDICATOR_ALPHA, Prefs.DEFAULT_INDICATOR_ALPHA);
-                int newTextColorMode = intent.getIntExtra(Prefs.KEY_INDICATOR_TEXT_COLOR_MODE, Prefs.DEFAULT_INDICATOR_TEXT_COLOR_MODE);
-                int newTextCustom    = intent.getIntExtra(Prefs.KEY_INDICATOR_TEXT_CUSTOM_COLOR, Prefs.DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR);
-                boolean newShadow = intent.getBooleanExtra(
-                        Prefs.KEY_INDICATOR_SHADOW, Prefs.DEFAULT_INDICATOR_SHADOW == 1);
-                boolean needsReinit = newColorMode != mIndicatorColorMode
-                        || newCustom != mIndicatorCustomColor
-                        || newTextColorMode != mTextColorMode
-                        || newTextCustom != mTextCustomColor
-                        || newShadow != mIndicatorShadow;
-                mIndicatorShadow      = newShadow;
-                mIndicatorColorMode   = newColorMode;
-                mIndicatorCustomColor = newCustom;
-                mIndicatorAlpha       = newAlpha;
-                mTextColorMode        = newTextColorMode;
-                mTextCustomColor      = newTextCustom;
-                mIndicatorYPosition   = intent.getIntExtra(Prefs.KEY_INDICATOR_Y_POSITION,
-                        Prefs.DEFAULT_INDICATOR_Y_POSITION);
-
-                boolean autoBrightness = intent.getBooleanExtra(Prefs.KEY_AUTO_BRIGHTNESS, false);
-                try {
-                    android.content.ContentResolver cr = mContext.getContentResolver();
-                    int currentMode = android.provider.Settings.System.getInt(cr,
-                            android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE,
-                            android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
-                    boolean alreadyAuto = currentMode ==
-                            android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC;
-                    if (autoBrightness) {
-                        if (!alreadyAuto) {
-                            int current = android.provider.Settings.System.getInt(cr,
-                                    android.provider.Settings.System.SCREEN_BRIGHTNESS, 128);
-                            android.provider.Settings.Secure.putInt(cr,
-                                    Prefs.KEY_SAVED_BRIGHTNESS, current);
-                            android.provider.Settings.System.putInt(cr,
-                                    android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE,
-                                    android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC);
-                        }
-                    } else {
-                        if (alreadyAuto) {
-                            android.provider.Settings.System.putInt(cr,
-                                    android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE,
-                                    android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
-                            int saved = android.provider.Settings.Secure.getInt(cr,
-                                    Prefs.KEY_SAVED_BRIGHTNESS, -1);
-                            if (saved >= 0) {
-                                android.provider.Settings.System.putInt(cr,
-                                        android.provider.Settings.System.SCREEN_BRIGHTNESS, saved);
-                            }
+                // The app has no WRITE_SECURE_SETTINGS grant, so it asks us to persist
+                // each change; we hold the permission (running in SystemUI).
+                String changedKey = null;
+                if (Prefs.ACTION_SET_PREF.equals(action)) {
+                    changedKey = intent.getStringExtra(Prefs.EXTRA_KEY);
+                    int value = intent.getIntExtra(Prefs.EXTRA_VALUE, 0);
+                    if (changedKey != null) {
+                        try {
+                            Settings.Secure.putInt(mContext.getContentResolver(), changedKey, value);
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + ": setPref write failed: " + t);
                         }
                     }
-                } catch (SecurityException ignored) {}
+                } else if (!Prefs.ACTION_PREFS_CHANGED.equals(action)) {
+                    return;
+                }
 
-                applyTuning();
+                // Reload everything from Secure (the source of truth we just updated) and apply.
+                boolean prevGesture = mGestureEnabled;
+                int prevColorMode = mIndicatorColorMode, prevCustom = mIndicatorCustomColor;
+                int prevTextMode = mTextColorMode, prevTextCustom = mTextCustomColor;
+                boolean prevShadow = mIndicatorShadow;
+
+                loadPrefsFromSecure(mContext);
+                applyAutoBrightness();
+
+                boolean needsReinit = prevColorMode != mIndicatorColorMode
+                        || prevCustom != mIndicatorCustomColor
+                        || prevTextMode != mTextColorMode
+                        || prevTextCustom != mTextCustomColor
+                        || prevShadow != mIndicatorShadow;
+
                 updateFullscreenTouch();
                 if (needsReinit) reinitIndicator();
                 if (prevGesture && !mGestureEnabled && mIndicatorAttached) {
@@ -374,6 +297,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         };
 
         IntentFilter filter = new IntentFilter(Prefs.ACTION_PREFS_CHANGED);
+        filter.addAction(Prefs.ACTION_SET_PREF);
         filter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);
         context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
         XposedBridge.log(TAG + ": prefs receiver registered");
@@ -398,6 +322,84 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             }
         };
         context.getContentResolver().registerContentObserver(modeUri, false, modeObserver);
+    }
+
+    /** Read every pref from Settings.Secure into the in-memory fields, then re-tune. */
+    private void loadPrefsFromSecure(Context context) {
+        try {
+            android.content.ContentResolver cr = context.getContentResolver();
+            mGestureEnabled = Settings.Secure.getInt(cr,
+                    Prefs.KEY_GESTURE_ENABLED, Prefs.DEFAULT_GESTURE_ENABLED) == 1;
+            mOverlayEnabled = Settings.Secure.getInt(cr,
+                    Prefs.KEY_OVERLAY_ENABLED, Prefs.DEFAULT_OVERLAY_ENABLED) == 1;
+            mBlockLongPressQS = Settings.Secure.getInt(cr,
+                    Prefs.KEY_BLOCK_LONGPRESS_QS, Prefs.DEFAULT_BLOCK_LONGPRESS_QS) == 1;
+            mFullscreenSwipe = Settings.Secure.getInt(cr,
+                    Prefs.KEY_FULLSCREEN_SWIPE, Prefs.DEFAULT_FULLSCREEN_SWIPE) == 1;
+            mHapticEnabled = Settings.Secure.getInt(cr,
+                    Prefs.KEY_HAPTIC_FEEDBACK, Prefs.DEFAULT_HAPTIC_FEEDBACK) == 1;
+            mSensitivity = Settings.Secure.getInt(cr,
+                    Prefs.KEY_SENSITIVITY, Prefs.DEFAULT_SENSITIVITY);
+            mEdgePaddingDp = Settings.Secure.getInt(cr,
+                    Prefs.KEY_EDGE_PADDING_DP, Prefs.DEFAULT_EDGE_PADDING_DP);
+            mIndicatorColorMode = Settings.Secure.getInt(cr,
+                    Prefs.KEY_INDICATOR_COLOR_MODE, Prefs.DEFAULT_INDICATOR_COLOR_MODE);
+            mIndicatorCustomColor = Settings.Secure.getInt(cr,
+                    Prefs.KEY_INDICATOR_CUSTOM_COLOR, Prefs.DEFAULT_INDICATOR_CUSTOM_COLOR);
+            mIndicatorAlpha = Settings.Secure.getInt(cr,
+                    Prefs.KEY_INDICATOR_ALPHA, Prefs.DEFAULT_INDICATOR_ALPHA);
+            mTextColorMode = Settings.Secure.getInt(cr,
+                    Prefs.KEY_INDICATOR_TEXT_COLOR_MODE, Prefs.DEFAULT_INDICATOR_TEXT_COLOR_MODE);
+            mTextCustomColor = Settings.Secure.getInt(cr,
+                    Prefs.KEY_INDICATOR_TEXT_CUSTOM_COLOR, Prefs.DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR);
+            mIndicatorYPosition = Settings.Secure.getInt(cr,
+                    Prefs.KEY_INDICATOR_Y_POSITION, Prefs.DEFAULT_INDICATOR_Y_POSITION);
+            mIndicatorShadow = Settings.Secure.getInt(cr,
+                    Prefs.KEY_INDICATOR_SHADOW, Prefs.DEFAULT_INDICATOR_SHADOW) == 1;
+            mReverseSlider = Settings.Secure.getInt(cr,
+                    Prefs.KEY_REVERSE_SLIDER, Prefs.DEFAULT_REVERSE_SLIDER) == 1;
+            applyTuning();
+        } catch (Throwable t) {
+            mGestureEnabled = true;
+            mOverlayEnabled = true;
+            mBlockLongPressQS = false;
+            mFullscreenSwipe = false;
+            mSensitivity = Prefs.DEFAULT_SENSITIVITY;
+            mEdgePaddingDp = Prefs.DEFAULT_EDGE_PADDING_DP;
+            applyTuning();
+            XposedBridge.log(TAG + ": Settings.Secure read failed, defaulting: " + t);
+        }
+    }
+
+    /** Apply the persisted KEY_AUTO_BRIGHTNESS value to Settings.System (needs SystemUI perms). */
+    private void applyAutoBrightness() {
+        try {
+            android.content.ContentResolver cr = mContext.getContentResolver();
+            boolean autoBrightness = Settings.Secure.getInt(cr,
+                    Prefs.KEY_AUTO_BRIGHTNESS, Prefs.DEFAULT_AUTO_BRIGHTNESS) == 1;
+            int currentMode = Settings.System.getInt(cr,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+            boolean alreadyAuto = currentMode == Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC;
+            if (autoBrightness) {
+                if (!alreadyAuto) {
+                    int current = Settings.System.getInt(cr,
+                            Settings.System.SCREEN_BRIGHTNESS, 128);
+                    Settings.Secure.putInt(cr, Prefs.KEY_SAVED_BRIGHTNESS, current);
+                    Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                            Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC);
+                }
+            } else {
+                if (alreadyAuto) {
+                    Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                            Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+                    int saved = Settings.Secure.getInt(cr, Prefs.KEY_SAVED_BRIGHTNESS, -1);
+                    if (saved >= 0) {
+                        Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, saved);
+                    }
+                }
+            }
+        } catch (SecurityException ignored) {}
     }
 
     // ── Touch hook setup ──────────────────────────────────────────────────────
@@ -796,7 +798,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         float fraction = usable <= 0
                 ? Math.max(0f, Math.min(1f, fingerX / mScreenWidth))
                 : Math.max(0f, Math.min(1f, (fingerX - mEdgePaddingPx) / usable));
-        int pct = Math.round(fraction * 100f);
+        // The pill tracks the finger (position fraction), but the % label shows the
+        // brightness value — which is the mirrored fraction when the slider is reversed.
+        int pct = Math.round((mReverseSlider ? 1f - fraction : fraction) * 100f);
 
         // Center the pill on the fraction point within the usable range.
         // The pill arrives at its endpoints exactly when brightness reaches 0 / 100%
@@ -1118,6 +1122,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         float fraction = usable <= 0
                 ? Math.max(0f, Math.min(1f, fingerX / mScreenWidth))
                 : Math.max(0f, Math.min(1f, (fingerX - mEdgePaddingPx) / usable));
+        // Reversed slider: 100% on the left, 0% on the right.
+        if (mReverseSlider) fraction = 1f - fraction;
         // Finger position raised to BRIGHTNESS_CURVE before mapping to the brightness float.
         // Settled on 2.2 (the original author's value) after trying linear and 1.3.
         float curved = (float) Math.pow(fraction, BRIGHTNESS_CURVE);

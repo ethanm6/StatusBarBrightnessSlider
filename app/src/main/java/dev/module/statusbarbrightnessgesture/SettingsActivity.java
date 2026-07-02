@@ -100,23 +100,17 @@ public class SettingsActivity extends AppCompatActivity {
                     Prefs.KEY_GESTURE_ENABLED, Prefs.DEFAULT_GESTURE_ENABLED,
                     enabled -> {
                         if (enabled) {
-                            try { Settings.Secure.putInt(getContentResolver(),
-                                    Prefs.KEY_AUTO_BRIGHTNESS, 0); }
-                            catch (SecurityException ignored) {}
+                            Prefs.setPref(this, Prefs.KEY_AUTO_BRIGHTNESS, 0);
                             if (mAutoSwitch != null) mAutoSwitch.setChecked(false);
                         }
-                        sendPrefs();
                     });
             addDivider(card, dp);
             mAutoSwitch = addSwitch(card, dp, "Auto brightness mode",
                     "Enable system auto-brightness and pause gesture control",
                     Prefs.KEY_AUTO_BRIGHTNESS, Prefs.DEFAULT_AUTO_BRIGHTNESS,
                     enabled -> {
-                        try { Settings.Secure.putInt(getContentResolver(),
-                                Prefs.KEY_GESTURE_ENABLED, enabled ? 0 : 1); }
-                        catch (SecurityException ignored) {}
+                        Prefs.setPref(this, Prefs.KEY_GESTURE_ENABLED, enabled ? 0 : 1);
                         if (mGestureSwitch != null) mGestureSwitch.setChecked(!enabled);
-                        sendPrefs();
                     });
         });
 
@@ -174,6 +168,10 @@ public class SettingsActivity extends AppCompatActivity {
             addSwitch(card, dp, "Fullscreen swipe",
                     "Adjust brightness at the top of the screen in fullscreen apps",
                     Prefs.KEY_FULLSCREEN_SWIPE, Prefs.DEFAULT_FULLSCREEN_SWIPE);
+            addDivider(card, dp);
+            addSwitch(card, dp, "Reverse direction",
+                    "0% on the right, 100% on the left",
+                    Prefs.KEY_REVERSE_SLIDER, Prefs.DEFAULT_REVERSE_SLIDER);
         });
 
         // Footer
@@ -193,24 +191,44 @@ public class SettingsActivity extends AppCompatActivity {
     interface CardFill { void fill(LinearLayout inner); }
 
     private void buildCard(LinearLayout parent, float dp, CardFill fill) {
-        MaterialCardView card = new MaterialCardView(this);
-        card.setRadius(28 * dp);
-        card.setCardElevation(0);
-        card.setCardBackgroundColor(colSurfaceContainer);
-        card.setStrokeWidth(0);
+        LinearLayout inner = new LinearLayout(this);
+        inner.setOrientation(LinearLayout.VERTICAL);
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
         lp.bottomMargin = (int)(4 * dp);
 
-        LinearLayout inner = new LinearLayout(this);
-        inner.setOrientation(LinearLayout.VERTICAL);
-        card.addView(inner, new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
         fill.fill(inner);
-        parent.addView(card, lp);
+
+        // Android-16-style segmented group: each row is its own rounded container
+        // with a small gap between rows — large radii on the group's outer corners,
+        // small radii between neighbours — instead of one card with divider lines.
+        float big = 28 * dp, small = 6 * dp;
+        int rippleColor = resolveColor(android.R.attr.colorControlHighlight, 0x1F888888);
+        int n = inner.getChildCount();
+        for (int i = 0; i < n; i++) {
+            View child = inner.getChildAt(i);
+            float t = (i == 0)     ? big : small;
+            float b = (i == n - 1) ? big : small;
+            float[] radii = {t, t, t, t, b, b, b, b};
+            android.graphics.drawable.GradientDrawable shape =
+                    new android.graphics.drawable.GradientDrawable();
+            shape.setColor(colSurfaceContainer);
+            shape.setCornerRadii(radii);
+            android.graphics.drawable.GradientDrawable mask =
+                    new android.graphics.drawable.GradientDrawable();
+            mask.setColor(0xFFFFFFFF);
+            mask.setCornerRadii(radii);
+            child.setBackground(new android.graphics.drawable.RippleDrawable(
+                    android.content.res.ColorStateList.valueOf(rippleColor), shape, mask));
+            if (i < n - 1 && child.getLayoutParams()
+                    instanceof LinearLayout.LayoutParams) {
+                ((LinearLayout.LayoutParams) child.getLayoutParams())
+                        .bottomMargin = (int)(3 * dp);
+            }
+        }
+        parent.addView(inner, lp);
     }
 
     // ── Section label ─────────────────────────────────────────────────────────
@@ -218,9 +236,9 @@ public class SettingsActivity extends AppCompatActivity {
     private void addSectionLabel(LinearLayout parent, float dp, String text) {
         TextView label = new TextView(this);
         label.setText(text);
-        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         label.setTextColor(colPrimary);
-        label.setTypeface(Typeface.DEFAULT_BOLD);
+        label.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         label.setPadding((int)(4*dp), (int)(24*dp), (int)(4*dp), (int)(8*dp));
         parent.addView(label, matchWidth());
     }
@@ -242,11 +260,7 @@ public class SettingsActivity extends AppCompatActivity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setMinimumHeight((int)(64 * dp));
         row.setPadding((int)(16*dp), (int)(14*dp), (int)(16*dp), (int)(14*dp));
-
-        TypedValue ripple = new TypedValue();
-        if (getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true)) {
-            row.setBackgroundResource(ripple.resourceId);
-        }
+        // Background (shape + ripple) is applied by buildCard's segmented-group pass.
 
         LinearLayout textCol = new LinearLayout(this);
         textCol.setOrientation(LinearLayout.VERTICAL);
@@ -259,12 +273,13 @@ public class SettingsActivity extends AppCompatActivity {
         tv.setText(title);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         tv.setTextColor(colOnSurface);
+        tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         textCol.addView(tv);
 
         if (desc != null && !desc.isEmpty()) {
             TextView dv = new TextView(this);
             dv.setText(desc);
-            dv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            dv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             dv.setTextColor(colOnSurfaceVariant);
             dv.setPadding(0, (int)(2*dp), 0, 0);
             textCol.addView(dv);
@@ -281,9 +296,7 @@ public class SettingsActivity extends AppCompatActivity {
         row.setOnClickListener(v -> {
             boolean next = !sw.isChecked();
             sw.setChecked(next);
-            try { Settings.Secure.putInt(getContentResolver(), key, next ? 1 : 0); }
-            catch (SecurityException ignored) {}
-            sendPrefs();
+            Prefs.setPref(this, key, next ? 1 : 0);
             if (onChange != null) onChange.accept(next);
         });
 
@@ -333,6 +346,7 @@ public class SettingsActivity extends AppCompatActivity {
         tv.setText(title);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         tv.setTextColor(colOnSurface);
+        tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         tv.setLayoutParams(new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         titleRow.addView(tv);
@@ -343,7 +357,7 @@ public class SettingsActivity extends AppCompatActivity {
         TextView valueLabel = new TextView(this);
         valueLabel.setText(current + unit);
         valueLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        valueLabel.setTextColor(colPrimary);
+        valueLabel.setTextColor(colOnSurfaceVariant);
         valueLabel.setTypeface(Typeface.DEFAULT_BOLD);
         titleRow.addView(valueLabel);
         col.addView(titleRow, matchWidth());
@@ -351,7 +365,7 @@ public class SettingsActivity extends AppCompatActivity {
         // Description
         TextView dv = new TextView(this);
         dv.setText(desc);
-        dv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        dv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         dv.setTextColor(colOnSurfaceVariant);
         dv.setPadding(0, (int)(3*dp), 0, (int)(6*dp));
         col.addView(dv, matchWidth());
@@ -369,9 +383,7 @@ public class SettingsActivity extends AppCompatActivity {
         slider.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
             @Override public void onStartTrackingTouch(@NonNull Slider s) {}
             @Override public void onStopTrackingTouch(@NonNull Slider s) {
-                try { Settings.Secure.putInt(getContentResolver(), key, (int) s.getValue()); }
-                catch (SecurityException ignored) {}
-                sendPrefs();
+                Prefs.setPref(SettingsActivity.this, key, (int) s.getValue());
             }
         });
         col.addView(slider, matchWidth());
@@ -382,13 +394,8 @@ public class SettingsActivity extends AppCompatActivity {
     // ── In-card divider ───────────────────────────────────────────────────────
 
     private void addDivider(LinearLayout parent, float dp) {
-        View line = new View(this);
-        line.setBackgroundColor(colOutlineVariant);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 1);
-        lp.setMarginStart((int)(16 * dp));
-        line.setLayoutParams(lp);
-        parent.addView(line);
+        // No-op: segmented groups (buildCard) separate rows with gaps, matching
+        // the Android 16 Settings look — divider lines are no longer drawn.
     }
 
     // ── Prefs broadcast ───────────────────────────────────────────────────────
@@ -443,8 +450,11 @@ public class SettingsActivity extends AppCompatActivity {
                                 night ? 0xFF2B2930 : 0xFFECE6F0);
         colOnSurface        = resolveColor(android.R.attr.textColorPrimary,
                                 night ? 0xFFE6E1E5 : 0xFF1D1B20);
-        colOnSurfaceVariant = resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant,
-                                night ? 0xFFCAC4D0 : 0xFF49454F);
+        // System secondary text color, so descriptions follow the system text
+        // palette; falls back to M3 onSurfaceVariant if the attr is missing.
+        colOnSurfaceVariant = resolveColor(android.R.attr.textColorSecondary,
+                                resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant,
+                                        night ? 0xFFCAC4D0 : 0xFF49454F));
         colPrimary          = resolveColor(android.R.attr.colorPrimary,
                                 night ? 0xFFD0BCFF : 0xFF6650A4);
         colOutlineVariant   = resolveColor(com.google.android.material.R.attr.colorOutlineVariant,
@@ -453,10 +463,19 @@ public class SettingsActivity extends AppCompatActivity {
 
     private int resolveColor(int attr, int fallback) {
         TypedValue tv = new TypedValue();
-        if (getTheme().resolveAttribute(attr, tv, true)
-                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
+        if (!getTheme().resolveAttribute(attr, tv, true)) return fallback;
+        if (tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
                 && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
             return tv.data;
+        }
+        // Text-color attrs (textColorPrimary/Secondary) resolve to ColorStateList
+        // resources, not raw color ints — without this branch they silently fell
+        // back to the hardcoded defaults instead of the system text palette.
+        if (tv.resourceId != 0) {
+            try {
+                android.content.res.ColorStateList csl = getColorStateList(tv.resourceId);
+                if (csl != null) return csl.getDefaultColor();
+            } catch (Throwable ignored) {}
         }
         return fallback;
     }
@@ -470,11 +489,7 @@ public class SettingsActivity extends AppCompatActivity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setMinimumHeight((int)(64 * dp));
         row.setPadding((int)(16*dp), (int)(14*dp), (int)(16*dp), (int)(14*dp));
-
-        TypedValue ripple = new TypedValue();
-        if (getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true)) {
-            row.setBackgroundResource(ripple.resourceId);
-        }
+        // Background (shape + ripple) is applied by buildCard's segmented-group pass.
 
         LinearLayout textCol = new LinearLayout(this);
         textCol.setOrientation(LinearLayout.VERTICAL);
@@ -487,12 +502,13 @@ public class SettingsActivity extends AppCompatActivity {
         tv.setText(title);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         tv.setTextColor(colOnSurface);
+        tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         textCol.addView(tv);
 
         if (desc != null && !desc.isEmpty()) {
             TextView dv = new TextView(this);
             dv.setText(desc);
-            dv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            dv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             dv.setTextColor(colOnSurfaceVariant);
             dv.setPadding(0, (int)(2*dp), 0, 0);
             textCol.addView(dv);

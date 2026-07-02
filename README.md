@@ -25,10 +25,8 @@ An LSPosed module that adds a horizontal swipe gesture on the status bar to cont
 1. Install the APK
 2. Enable the module in LSPosed with scope set to **System UI**
 3. Reboot
-4. Grant the permission via ADB (one-time):
-   ```
-   adb shell pm grant dev.module.statusbarbrightnessgesture android.permission.WRITE_SECURE_SETTINGS
-   ```
+
+No ADB commands or manual permission grants are needed.
 
 ## Based on
 

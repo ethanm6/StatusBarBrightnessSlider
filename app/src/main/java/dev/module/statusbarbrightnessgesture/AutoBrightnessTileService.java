@@ -20,13 +20,9 @@ public class AutoBrightnessTileService extends TileService {
         if (System.currentTimeMillis() - sLastPrefOpenMs < 500) return;
         Tile tile = getQsTile();
         boolean enabling = tile.getState() != Tile.STATE_ACTIVE;
-        try {
-            Settings.Secure.putInt(getContentResolver(),
-                    Prefs.KEY_AUTO_BRIGHTNESS, enabling ? 1 : 0);
-            Settings.Secure.putInt(getContentResolver(),
-                    Prefs.KEY_GESTURE_ENABLED, enabling ? 0 : 1);
-        } catch (SecurityException ignored) {}
-        Prefs.sendAll(this);
+        // The hook (in SystemUI) persists these — the app has no WRITE_SECURE_SETTINGS grant.
+        Prefs.setPref(this, Prefs.KEY_AUTO_BRIGHTNESS, enabling ? 1 : 0);
+        Prefs.setPref(this, Prefs.KEY_GESTURE_ENABLED, enabling ? 0 : 1);
         tile.setState(enabling ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         tile.updateTile();
     }

@@ -195,7 +195,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         mPreviewWrapper.setTranslationY(-10000);  // hidden until scroll.post() positions it
 
         mPreviewCard = new MaterialCardView(this);
-        mPreviewCard.setRadius(24 * dp);
+        mPreviewCard.setRadius(28 * dp);
         mPreviewCard.setCardElevation(0);
         mPreviewCard.setCardBackgroundColor(colSurfaceContainer);
         mPreviewCard.setStrokeWidth(0);
@@ -217,7 +217,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
 
     private void buildColorSection(LinearLayout parent) {
         MaterialCardView card = new MaterialCardView(this);
-        card.setRadius(24 * dp);
+        card.setRadius(28 * dp);
         card.setCardElevation(0);
         card.setCardBackgroundColor(colSurfaceContainer);
         card.setStrokeWidth(0);
@@ -313,9 +313,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
 
     private void selectColorMode(int mode) {
         mColorMode = mode;
-        try { Settings.Secure.putInt(getContentResolver(), Prefs.KEY_INDICATOR_COLOR_MODE, mode); }
-        catch (SecurityException ignored) {}
-        Prefs.sendAll(this);
+        Prefs.setPref(this, Prefs.KEY_INDICATOR_COLOR_MODE, mode);
         refreshColorSwatches();
         refreshTextColorSwatches();
         invalidatePreviews();
@@ -328,15 +326,14 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
             int color = Color.parseColor(text) | 0xFF000000;
             mCustomColor = color;
             mColorMode = Prefs.COLOR_MODE_CUSTOM;
-            Settings.Secure.putInt(getContentResolver(), Prefs.KEY_INDICATOR_CUSTOM_COLOR, color);
-            Settings.Secure.putInt(getContentResolver(), Prefs.KEY_INDICATOR_COLOR_MODE, Prefs.COLOR_MODE_CUSTOM);
-            Prefs.sendAll(this);
+            Prefs.setPref(this, Prefs.KEY_INDICATOR_CUSTOM_COLOR, color);
+            Prefs.setPref(this, Prefs.KEY_INDICATOR_COLOR_MODE, Prefs.COLOR_MODE_CUSTOM);
             mSwatches[2].setColor(color);
             refreshColorSwatches();
             invalidatePreviews();
         } catch (IllegalArgumentException e) {
             mHexInput.setError("Invalid color");
-        } catch (SecurityException ignored) {}
+        }
     }
 
     private void refreshColorSwatches() {
@@ -356,7 +353,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
 
     private void buildOpacitySection(LinearLayout parent) {
         MaterialCardView card = new MaterialCardView(this);
-        card.setRadius(24 * dp);
+        card.setRadius(28 * dp);
         card.setCardElevation(0);
         card.setCardBackgroundColor(colSurfaceContainer);
         card.setStrokeWidth(0);
@@ -387,9 +384,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
             if (!fromUser) return;
             mAlpha = (int) value;
             mAlphaValueLabel.setText(mAlpha + "%");
-            try { Settings.Secure.putInt(getContentResolver(), Prefs.KEY_INDICATOR_ALPHA, mAlpha); }
-            catch (SecurityException ignored) {}
-            Prefs.sendAll(this);
+            Prefs.setPref(this, Prefs.KEY_INDICATOR_ALPHA, mAlpha);
             invalidatePreviews();
         });
         inner.addView(slider, new LinearLayout.LayoutParams(
@@ -404,7 +399,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
 
     private void buildShadowSection(LinearLayout parent) {
         MaterialCardView card = new MaterialCardView(this);
-        card.setRadius(24 * dp);
+        card.setRadius(28 * dp);
         card.setCardElevation(0);
         card.setCardBackgroundColor(colSurfaceContainer);
         card.setStrokeWidth(0);
@@ -423,11 +418,12 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         title.setText("Drop shadow");
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         title.setTextColor(colOnSurface);
+        title.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
         texts.addView(title, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView desc = new TextView(this);
         desc.setText("Cast a soft shadow behind the indicator");
-        desc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        desc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         desc.setTextColor(colOnSurfaceVariant);
         texts.addView(desc, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -438,10 +434,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         sw.setChecked(mShadow);
         sw.setOnCheckedChangeListener((v, checked) -> {
             mShadow = checked;
-            try { Settings.Secure.putInt(getContentResolver(),
-                    Prefs.KEY_INDICATOR_SHADOW, checked ? 1 : 0); }
-            catch (SecurityException ignored) {}
-            Prefs.sendAll(this);
+            Prefs.setPref(this, Prefs.KEY_INDICATOR_SHADOW, checked ? 1 : 0);
             invalidatePreviews();
         });
         row.addView(sw, new LinearLayout.LayoutParams(
@@ -470,7 +463,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
 
     private void buildTextColorSection(LinearLayout parent) {
         MaterialCardView card = new MaterialCardView(this);
-        card.setRadius(24 * dp);
+        card.setRadius(28 * dp);
         card.setCardElevation(0);
         card.setCardBackgroundColor(colSurfaceContainer);
         card.setStrokeWidth(0);
@@ -498,11 +491,12 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         titleTv.setText("Text color");
         titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         titleTv.setTextColor(colOnSurface);
+        titleTv.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
         headerTexts.addView(titleTv, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         mTextColorSubtitle = new TextView(this);
-        mTextColorSubtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        mTextColorSubtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         mTextColorSubtitle.setTextColor(colOnSurfaceVariant);
         headerTexts.addView(mTextColorSubtitle, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -697,9 +691,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
 
     private void selectTextColorMode(int mode) {
         mTextColorMode = mode;
-        try { Settings.Secure.putInt(getContentResolver(), Prefs.KEY_INDICATOR_TEXT_COLOR_MODE, mode); }
-        catch (SecurityException ignored) {}
-        Prefs.sendAll(this);
+        Prefs.setPref(this, Prefs.KEY_INDICATOR_TEXT_COLOR_MODE, mode);
         refreshTextColorSwatches();
         invalidatePreviews();
     }
@@ -711,15 +703,14 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
             int color = Color.parseColor(text) | 0xFF000000;
             mTextCustomColor = color;
             mTextColorMode = Prefs.TEXT_COLOR_MODE_CUSTOM;
-            Settings.Secure.putInt(getContentResolver(), Prefs.KEY_INDICATOR_TEXT_CUSTOM_COLOR, color);
-            Settings.Secure.putInt(getContentResolver(), Prefs.KEY_INDICATOR_TEXT_COLOR_MODE, Prefs.TEXT_COLOR_MODE_CUSTOM);
-            Prefs.sendAll(this);
+            Prefs.setPref(this, Prefs.KEY_INDICATOR_TEXT_CUSTOM_COLOR, color);
+            Prefs.setPref(this, Prefs.KEY_INDICATOR_TEXT_COLOR_MODE, Prefs.TEXT_COLOR_MODE_CUSTOM);
             mTextSwatches[3].setColor(color);
             refreshTextColorSwatches();
             invalidatePreviews();
         } catch (IllegalArgumentException e) {
             mTextHexInput.setError("Invalid color");
-        } catch (SecurityException ignored) {}
+        }
     }
 
     private void refreshTextColorSwatches() {
@@ -800,9 +791,10 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
     private void addSectionLabel(LinearLayout parent, String text, int topDp) {
         TextView label = new TextView(this);
         label.setText(text);
-        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         label.setTextColor(colPrimary);
-        label.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        label.setTypeface(android.graphics.Typeface.create(
+                "sans-serif-medium", android.graphics.Typeface.NORMAL));
         label.setPadding((int)(4*dp), (int)(topDp*dp), (int)(4*dp), (int)(8*dp));
         parent.addView(label, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -854,7 +846,10 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
             mFillPaint.setStyle(Paint.Style.FILL);
             mFillPaint.setAlpha(Math.round(mAlpha / 100f * 255));
             if (mShadow) {
-                mFillPaint.setShadowLayer(8 * dp, 0, 3 * dp, 0x66000000);
+                // The real indicator dims via window alpha, which fades the shadow
+                // together with the pill — mirror that by scaling the shadow alpha.
+                int shadowAlpha = Math.round(0x66 * mAlpha / 100f);
+                mFillPaint.setShadowLayer(8 * dp, 0, 3 * dp, shadowAlpha << 24);
             } else {
                 mFillPaint.clearShadowLayer();
             }
@@ -980,18 +975,30 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
                                 night ? 0xFF2B2930 : 0xFFECE6F0);
         colOnSurface        = resolveAttr(android.R.attr.textColorPrimary,
                                 night ? 0xFFE6E1E5 : 0xFF1D1B20);
-        colOnSurfaceVariant = resolveAttr(com.google.android.material.R.attr.colorOnSurfaceVariant,
-                                night ? 0xFFCAC4D0 : 0xFF49454F);
+        // System secondary text color, so descriptions follow the system text
+        // palette; falls back to M3 onSurfaceVariant if the attr is missing.
+        colOnSurfaceVariant = resolveAttr(android.R.attr.textColorSecondary,
+                                resolveAttr(com.google.android.material.R.attr.colorOnSurfaceVariant,
+                                        night ? 0xFFCAC4D0 : 0xFF49454F));
         colPrimary          = resolveAttr(android.R.attr.colorPrimary,
                                 night ? 0xFFD0BCFF : 0xFF6650A4);
     }
 
     private int resolveAttr(int attr, int fallback) {
         TypedValue tv = new TypedValue();
-        if (getTheme().resolveAttribute(attr, tv, true)
-                && tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
+        if (!getTheme().resolveAttribute(attr, tv, true)) return fallback;
+        if (tv.type >= TypedValue.TYPE_FIRST_COLOR_INT
                 && tv.type <= TypedValue.TYPE_LAST_COLOR_INT) {
             return tv.data;
+        }
+        // Text-color attrs (textColorPrimary/Secondary) resolve to ColorStateList
+        // resources, not raw color ints — without this branch they silently fell
+        // back to the hardcoded defaults instead of the system text palette.
+        if (tv.resourceId != 0) {
+            try {
+                android.content.res.ColorStateList csl = getColorStateList(tv.resourceId);
+                if (csl != null) return csl.getDefaultColor();
+            } catch (Throwable ignored) {}
         }
         return fallback;
     }

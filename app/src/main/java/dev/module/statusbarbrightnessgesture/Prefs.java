@@ -2,7 +2,6 @@ package dev.module.statusbarbrightnessgesture;
 
 import android.content.Context;
 import android.content.Intent;
-import android.provider.Settings;
 
 public final class Prefs {
 
@@ -25,9 +24,18 @@ public final class Prefs {
     public static final String KEY_INDICATOR_TEXT_COLOR_MODE   = "sbbrightness_indicator_text_color_mode";
     public static final String KEY_INDICATOR_TEXT_CUSTOM_COLOR = "sbbrightness_indicator_text_custom_color";
     public static final String KEY_INDICATOR_SHADOW            = "sbbrightness_indicator_shadow";
+    public static final String KEY_REVERSE_SLIDER               = "sbbrightness_reverse_slider";
 
     public static final String ACTION_PREFS_CHANGED =
             "dev.module.statusbarbrightnessgesture.PREFS_CHANGED";
+
+    // Sent by the app to ask the hook (running in SystemUI, which holds
+    // WRITE_SECURE_SETTINGS) to persist a single pref. The app itself never writes
+    // Settings.Secure, so it needs no permission grant.
+    public static final String ACTION_SET_PREF =
+            "dev.module.statusbarbrightnessgesture.SET_PREF";
+    public static final String EXTRA_KEY   = "key";
+    public static final String EXTRA_VALUE = "value";
 
     public static final int DEFAULT_GESTURE_ENABLED      = 1;
     public static final int DEFAULT_OVERLAY_ENABLED       = 1;
@@ -47,6 +55,7 @@ public final class Prefs {
     public static final int DEFAULT_INDICATOR_TEXT_COLOR_MODE   = 0;
     public static final int DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR = 0xFFFFFFFF;
     public static final int DEFAULT_INDICATOR_SHADOW            = 0;
+    public static final int DEFAULT_REVERSE_SLIDER               = 0;
 
     public static final int SENSITIVITY_MIN    = 1;
     public static final int SENSITIVITY_MAX    = 10;
@@ -79,43 +88,22 @@ public final class Prefs {
     public static final int COLOR_MODE_ACCENT_LIGHT = 8;
     public static final int COLOR_MODE_ACCENT_DARK  = 9;
 
-    /** Broadcast all prefs to SystemUI. Called from both settings screens. */
+    /**
+     * Ask the hook to persist one pref value to Settings.Secure and re-apply.
+     * The app has no WRITE_SECURE_SETTINGS grant; the hook (in SystemUI) writes it.
+     */
+    public static void setPref(Context ctx, String key, int value) {
+        Intent i = new Intent(ACTION_SET_PREF);
+        i.setPackage("com.android.systemui");
+        i.putExtra(EXTRA_KEY, key);
+        i.putExtra(EXTRA_VALUE, value);
+        ctx.sendBroadcast(i);
+    }
+
+    /** Nudge SystemUI to reload all prefs from Settings.Secure and re-apply. */
     public static void sendAll(Context ctx) {
         Intent i = new Intent(ACTION_PREFS_CHANGED);
         i.setPackage("com.android.systemui");
-        android.content.ContentResolver cr = ctx.getContentResolver();
-        i.putExtra(KEY_GESTURE_ENABLED,
-                Settings.Secure.getInt(cr, KEY_GESTURE_ENABLED, DEFAULT_GESTURE_ENABLED) == 1);
-        i.putExtra(KEY_OVERLAY_ENABLED,
-                Settings.Secure.getInt(cr, KEY_OVERLAY_ENABLED, DEFAULT_OVERLAY_ENABLED) == 1);
-        i.putExtra(KEY_BLOCK_LONGPRESS_QS,
-                Settings.Secure.getInt(cr, KEY_BLOCK_LONGPRESS_QS, DEFAULT_BLOCK_LONGPRESS_QS) == 1);
-        i.putExtra(KEY_FULLSCREEN_SWIPE,
-                Settings.Secure.getInt(cr, KEY_FULLSCREEN_SWIPE, DEFAULT_FULLSCREEN_SWIPE) == 1);
-        i.putExtra(KEY_HAPTIC_FEEDBACK,
-                Settings.Secure.getInt(cr, KEY_HAPTIC_FEEDBACK, DEFAULT_HAPTIC_FEEDBACK) == 1);
-        i.putExtra(KEY_SENSITIVITY,
-                Settings.Secure.getInt(cr, KEY_SENSITIVITY, DEFAULT_SENSITIVITY));
-        i.putExtra(KEY_EDGE_PADDING_DP,
-                Settings.Secure.getInt(cr, KEY_EDGE_PADDING_DP, DEFAULT_EDGE_PADDING_DP));
-        i.putExtra(KEY_INDICATOR_SHAPE,
-                Settings.Secure.getInt(cr, KEY_INDICATOR_SHAPE, DEFAULT_INDICATOR_SHAPE));
-        i.putExtra(KEY_INDICATOR_COLOR_MODE,
-                Settings.Secure.getInt(cr, KEY_INDICATOR_COLOR_MODE, DEFAULT_INDICATOR_COLOR_MODE));
-        i.putExtra(KEY_INDICATOR_CUSTOM_COLOR,
-                Settings.Secure.getInt(cr, KEY_INDICATOR_CUSTOM_COLOR, DEFAULT_INDICATOR_CUSTOM_COLOR));
-        i.putExtra(KEY_INDICATOR_ALPHA,
-                Settings.Secure.getInt(cr, KEY_INDICATOR_ALPHA, DEFAULT_INDICATOR_ALPHA));
-        i.putExtra(KEY_INDICATOR_TEXT_COLOR_MODE,
-                Settings.Secure.getInt(cr, KEY_INDICATOR_TEXT_COLOR_MODE, DEFAULT_INDICATOR_TEXT_COLOR_MODE));
-        i.putExtra(KEY_INDICATOR_TEXT_CUSTOM_COLOR,
-                Settings.Secure.getInt(cr, KEY_INDICATOR_TEXT_CUSTOM_COLOR, DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR));
-        i.putExtra(KEY_INDICATOR_SHADOW,
-                Settings.Secure.getInt(cr, KEY_INDICATOR_SHADOW, DEFAULT_INDICATOR_SHADOW) == 1);
-        i.putExtra(KEY_AUTO_BRIGHTNESS,
-                Settings.Secure.getInt(cr, KEY_AUTO_BRIGHTNESS, DEFAULT_AUTO_BRIGHTNESS) == 1);
-        i.putExtra(KEY_INDICATOR_Y_POSITION,
-                Settings.Secure.getInt(cr, KEY_INDICATOR_Y_POSITION, DEFAULT_INDICATOR_Y_POSITION));
         ctx.sendBroadcast(i);
     }
 
