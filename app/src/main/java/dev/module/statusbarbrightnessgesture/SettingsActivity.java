@@ -171,8 +171,8 @@ public class SettingsActivity extends AppCompatActivity {
                     "Prevents holding the status bar from opening Quick Settings",
                     Prefs.KEY_BLOCK_LONGPRESS_QS, Prefs.DEFAULT_BLOCK_LONGPRESS_QS);
             addDivider(card, dp);
-            addSwitch(card, dp, "Fullscreen swipe (experimental)",
-                    "Adjust brightness at the top of the screen in fullscreen apps. May briefly show the notification shade.",
+            addSwitch(card, dp, "Fullscreen swipe",
+                    "Adjust brightness at the top of the screen in fullscreen apps",
                     Prefs.KEY_FULLSCREEN_SWIPE, Prefs.DEFAULT_FULLSCREEN_SWIPE);
         });
 

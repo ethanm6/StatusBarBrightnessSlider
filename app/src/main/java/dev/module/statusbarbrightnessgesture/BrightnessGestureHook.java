@@ -76,6 +76,12 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private float mLastTargetBrightness = -1f;
     private boolean mGestureActive = false;
     private boolean mTouchStartedInStatusBar = false;
+    // downTime of the touch stream currently owned by the real PhoneStatusBarView window.
+    // In peek mode (transient status bar in fullscreen) the SBV receives the touches while
+    // isStatusBarHidden() is still true, so the gesture monitor would double-process the
+    // same stream and its pilferPointers() would CANCEL the SBV stream, killing the
+    // gesture. The monitor skips any stream whose downTime matches this.
+    private volatile long mSbvStreamDownTime = -1;
 
     // ── Cached resources ──────────────────────────────────────────────────────
 
@@ -108,6 +114,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     private android.view.View mIndicatorView;   // root window view (pill or teardrop)
     private TextView mIndicatorTextView;        // inner text view for setText
+    private int mIndicatorShadowPad = 0;        // wrapper padding when shadow is enabled
     private WindowManager.LayoutParams mIndicatorParams;
     private int mIndicatorW;
     private int mIndicatorH;
@@ -134,6 +141,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private volatile int mTextColorMode         = Prefs.DEFAULT_INDICATOR_TEXT_COLOR_MODE;
     private volatile int mTextCustomColor       = Prefs.DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR;
     private volatile int mIndicatorYPosition    = Prefs.DEFAULT_INDICATOR_Y_POSITION;
+    private volatile boolean mIndicatorShadow   = Prefs.DEFAULT_INDICATOR_SHADOW == 1;
 
     // ── Fullscreen touch overlay ──────────────────────────────────────────────
 
@@ -178,6 +186,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         hookAttachedToWindow(PHONE_STATUS_BAR_VIEW,
                 lpparam.classLoader, hookMethodFn);
         suppressShadeExpansion(lpparam.classLoader, hookMethodFn);
+        hookFlingToHeight(lpparam.classLoader, hookMethodFn);
     }
 
     // ── Runtime reflection to find LSPosed's real hookMethod ──────────────────
@@ -262,6 +271,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     Prefs.KEY_INDICATOR_TEXT_CUSTOM_COLOR, Prefs.DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR);
             mIndicatorYPosition = Settings.Secure.getInt(context.getContentResolver(),
                     Prefs.KEY_INDICATOR_Y_POSITION, Prefs.DEFAULT_INDICATOR_Y_POSITION);
+            mIndicatorShadow = Settings.Secure.getInt(context.getContentResolver(),
+                    Prefs.KEY_INDICATOR_SHADOW, Prefs.DEFAULT_INDICATOR_SHADOW) == 1;
             applyTuning();
             XposedBridge.log(TAG + ": boot state from Settings.Secure — gesture="
                     + mGestureEnabled + " overlay=" + mOverlayEnabled
@@ -304,10 +315,14 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 int newAlpha         = intent.getIntExtra(Prefs.KEY_INDICATOR_ALPHA, Prefs.DEFAULT_INDICATOR_ALPHA);
                 int newTextColorMode = intent.getIntExtra(Prefs.KEY_INDICATOR_TEXT_COLOR_MODE, Prefs.DEFAULT_INDICATOR_TEXT_COLOR_MODE);
                 int newTextCustom    = intent.getIntExtra(Prefs.KEY_INDICATOR_TEXT_CUSTOM_COLOR, Prefs.DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR);
+                boolean newShadow = intent.getBooleanExtra(
+                        Prefs.KEY_INDICATOR_SHADOW, Prefs.DEFAULT_INDICATOR_SHADOW == 1);
                 boolean needsReinit = newColorMode != mIndicatorColorMode
                         || newCustom != mIndicatorCustomColor
                         || newTextColorMode != mTextColorMode
-                        || newTextCustom != mTextCustomColor;
+                        || newTextCustom != mTextCustomColor
+                        || newShadow != mIndicatorShadow;
+                mIndicatorShadow      = newShadow;
                 mIndicatorColorMode   = newColorMode;
                 mIndicatorCustomColor = newCustom;
                 mIndicatorAlpha       = newAlpha;
@@ -416,6 +431,12 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         }
                     }
                     if (!mGestureEnabled) return;
+                    // Mark this stream as owned by the real status bar window so the
+                    // gesture monitor leaves it alone (peek mode double-processing guard).
+                    if (isStatusBarView
+                            && ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                        mSbvStreamDownTime = ev.getDownTime();
+                    }
                     // Capture before handleTouchEvent mutates it — reflects whether a real
                     // brightness drag was already underway going into this event.
                     boolean wasGestureActive = mGestureActive;
@@ -601,10 +622,55 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED),
                 android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED));
 
-        mIndicatorView     = tv;
         mIndicatorTextView = tv;
-        mIndicatorW = tv.getMeasuredWidth();
-        mIndicatorH = tv.getMeasuredHeight();
+        mIndicatorShadowPad = 0;
+        if (mIndicatorShadow) {
+            // Shadow drawn with Paint.setShadowLayer using the SAME parameters as
+            // the settings preview (blur 8dp, dy 3dp, 0x66000000) so they match —
+            // elevation shadows render much lighter. The wrapper is padded and
+            // non-clipping so the blur has room; software layer is required for
+            // setShadowLayer on shapes.
+            final int pad = (int)(16 * d);
+            final float blur = 8 * d, dy = 3 * d;
+            final int pillColor = accent;
+            android.widget.FrameLayout wrap = new android.widget.FrameLayout(context) {
+                private final android.graphics.Paint mShadowPaint =
+                        new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                @Override
+                protected void onDraw(android.graphics.Canvas canvas) {
+                    super.onDraw(canvas);
+                    float l = pad, t = pad;
+                    float r = getWidth() - pad, b = getHeight() - pad;
+                    float rad = (b - t) / 2f;
+                    // Same fill color as the pill so anti-aliased edges blend;
+                    // the TextView's own background draws on top of this rect.
+                    mShadowPaint.setColor(pillColor);
+                    mShadowPaint.setShadowLayer(blur, 0, dy, 0x66000000);
+                    canvas.drawRoundRect(l, t, r, b, rad, rad, mShadowPaint);
+                }
+            };
+            wrap.setWillNotDraw(false);
+            wrap.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null);
+            wrap.setClipChildren(false);
+            wrap.setClipToPadding(false);
+            wrap.setPadding(pad, pad, pad, pad);
+            // Fixed child size (measured at "100%") so the pill width doesn't
+            // shrink as the text gets shorter — same behavior as the no-shadow
+            // window, which is sized once from this measurement.
+            android.widget.FrameLayout.LayoutParams lp =
+                    new android.widget.FrameLayout.LayoutParams(
+                            tv.getMeasuredWidth(), tv.getMeasuredHeight(),
+                            Gravity.CENTER);
+            wrap.addView(tv, lp);
+            mIndicatorShadowPad = pad;
+            mIndicatorView = wrap;
+            mIndicatorW = tv.getMeasuredWidth()  + 2 * pad;
+            mIndicatorH = tv.getMeasuredHeight() + 2 * pad;
+        } else {
+            mIndicatorView = tv;
+            mIndicatorW = tv.getMeasuredWidth();
+            mIndicatorH = tv.getMeasuredHeight();
+        }
     }
 
     private void reinitIndicator() {
@@ -735,10 +801,15 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         // Center the pill on the fraction point within the usable range.
         // The pill arrives at its endpoints exactly when brightness reaches 0 / 100%
         // — no secondary snap from a disconnected pixel clamp.
+        // Clamp so the PILL (not the shadow-padded window) stops at the screen edges.
         float centerX = mEdgePaddingPx + fraction * usable;
-        int xOffset = Math.max(0, Math.min(mScreenWidth - mIndicatorW,
-                Math.round(centerX - mIndicatorW / 2f)));
-        int yOffset = (int)(Math.max(mScreenWidth, mScreenHeight) * mIndicatorYPosition / 100f);
+        int xOffset = Math.max(-mIndicatorShadowPad,
+                Math.min(mScreenWidth - mIndicatorW + mIndicatorShadowPad,
+                        Math.round(centerX - mIndicatorW / 2f)));
+        // Subtract the shadow wrapper padding so the pill's visual position is the
+        // same whether or not the shadow (and its padded window) is enabled.
+        int yOffset = (int)(Math.max(mScreenWidth, mScreenHeight) * mIndicatorYPosition / 100f)
+                - mIndicatorShadowPad;
 
         mIndicatorParams.x = xOffset;
 
@@ -831,18 +902,55 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             Class<?> c = Class.forName(
                     "com.android.systemui.shade.ShadeControllerImpl", false, cl);
             for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
-                if (!m.getName().equalsIgnoreCase("instantExpandShade")) continue;
-                if (m.getReturnType() != void.class) continue;
+                if (m.getName().equalsIgnoreCase("instantExpandShade")
+                        && m.getReturnType() == void.class) {
+                    m.setAccessible(true);
+                    hookMethodFn.invoke(null, m, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (mSuppressShadeExpand) param.setResult(null);
+                        }
+                    });
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": suppressShadeExpansion failed: " + t);
+        }
+    }
+
+    // Root cause of the fullscreen shade flash (confirmed via stack trace): in fullscreen,
+    // this ROM routes top-strip touches directly to NotificationShadeWindowView, so the
+    // panel's TouchHandler tracks our brightness swipe. When our pilfer/synthetic cancel
+    // ends that stream with ACTION_CANCEL, endMotionEvent force-expands the panel
+    // (AOSP treats cancel-while-tracking as "expand"), flinging the shade open.
+    // Fix: while a brightness gesture has suppress armed, redirect any panel fling to a
+    // collapse (expand=false, target=0). The method still runs normally — no state
+    // corruption — it just animates to closed instead of open.
+    private void hookFlingToHeight(ClassLoader cl, Method hookMethodFn) {
+        try {
+            Class<?> c = Class.forName(
+                    "com.android.systemui.shade.NotificationPanelViewController", false, cl);
+            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                if (!m.getName().equals("flingToHeight")) continue;
+                final Class<?>[] p = m.getParameterTypes();
                 m.setAccessible(true);
                 hookMethodFn.invoke(null, m, new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
-                        if (mSuppressShadeExpand) param.setResult(null);
+                        if (!mSuppressShadeExpand) return;
+                        // AOSP: flingToHeight(float vel, boolean expand, float target,
+                        //                     float collapseSpeedUpFactor, boolean falsing)
+                        for (int i = 0; i < p.length; i++) {
+                            if (p[i] == boolean.class) { param.args[i] = false; break; }
+                        }
+                        if (p.length >= 3 && p[2] == float.class) param.args[2] = 0f;
                     }
                 });
+                XposedBridge.log(TAG + ": hooked flingToHeight "
+                        + java.util.Arrays.toString(p));
             }
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": suppressShadeExpansion failed: " + t);
+            XposedBridge.log(TAG + ": hookFlingToHeight failed: " + t);
         }
     }
 
@@ -1127,7 +1235,11 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         // double-handle shared gesture state and interfere with taps reaching
                         // the app below. So stay completely dormant unless the bar is hidden.
                         if (event instanceof MotionEvent && mGestureEnabled
-                                && mFullscreenSwipe && isStatusBarHidden()) {
+                                && mFullscreenSwipe && isStatusBarHidden()
+                                // Peek mode: the transient status bar window owns this
+                                // stream — the SBV hook handles it; pilfering here would
+                                // CANCEL that stream and kill the gesture.
+                                && ((MotionEvent) event).getDownTime() != mSbvStreamDownTime) {
                             MotionEvent me = (MotionEvent) event;
                             int action = me.getActionMasked();
                             boolean inStrip = (action == MotionEvent.ACTION_DOWN)

@@ -30,6 +30,7 @@ import androidx.core.widget.NestedScrollView;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.color.DynamicColors;
+import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.Slider;
 
 public class IndicatorAppearanceActivity extends AppCompatActivity {
@@ -46,6 +47,7 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
     private int mAlpha;
     private int mTextColorMode;
     private int mTextCustomColor;
+    private boolean mShadow;
 
     private IndicatorPreviewView mPreviewView;
     private MaterialCardView mPreviewCard;
@@ -79,6 +81,8 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
                 Prefs.KEY_INDICATOR_TEXT_COLOR_MODE,   Prefs.DEFAULT_INDICATOR_TEXT_COLOR_MODE);
         mTextCustomColor = Settings.Secure.getInt(getContentResolver(),
                 Prefs.KEY_INDICATOR_TEXT_CUSTOM_COLOR, Prefs.DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR);
+        mShadow          = Settings.Secure.getInt(getContentResolver(),
+                Prefs.KEY_INDICATOR_SHADOW,            Prefs.DEFAULT_INDICATOR_SHADOW) == 1;
 
         // ── Root ──────────────────────────────────────────────────────────────
         LinearLayout root = new LinearLayout(this);
@@ -166,6 +170,8 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         buildTextColorSection(content);
         addSectionLabel(content, "Opacity");
         buildOpacitySection(content);
+        addSectionLabel(content, "Effects");
+        buildShadowSection(content);
 
         refreshColorSwatches();
         refreshTextColorSwatches();
@@ -390,6 +396,58 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         card.addView(inner, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        parent.addView(card, cardLp);
+    }
+
+    // ── Shadow section ────────────────────────────────────────────────────────
+
+    private void buildShadowSection(LinearLayout parent) {
+        MaterialCardView card = new MaterialCardView(this);
+        card.setRadius(24 * dp);
+        card.setCardElevation(0);
+        card.setCardBackgroundColor(colSurfaceContainer);
+        card.setStrokeWidth(0);
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardLp.bottomMargin = (int)(24 * dp);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding((int)(20*dp), (int)(12*dp), (int)(20*dp), (int)(12*dp));
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        TextView title = new TextView(this);
+        title.setText("Drop shadow");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        title.setTextColor(colOnSurface);
+        texts.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView desc = new TextView(this);
+        desc.setText("Cast a soft shadow behind the indicator");
+        desc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        desc.setTextColor(colOnSurfaceVariant);
+        texts.addView(desc, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(texts, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        MaterialSwitch sw = new MaterialSwitch(this);
+        sw.setChecked(mShadow);
+        sw.setOnCheckedChangeListener((v, checked) -> {
+            mShadow = checked;
+            try { Settings.Secure.putInt(getContentResolver(),
+                    Prefs.KEY_INDICATOR_SHADOW, checked ? 1 : 0); }
+            catch (SecurityException ignored) {}
+            Prefs.sendAll(this);
+            invalidatePreviews();
+        });
+        row.addView(sw, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        card.addView(row, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         parent.addView(card, cardLp);
     }
@@ -763,7 +821,11 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         private final Paint mFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint mTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
-        IndicatorPreviewView() { super(IndicatorAppearanceActivity.this); }
+        IndicatorPreviewView() {
+            super(IndicatorAppearanceActivity.this);
+            // Software layer so Paint.setShadowLayer renders for shapes.
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        }
 
         @Override
         protected void onDraw(@NonNull Canvas canvas) {
@@ -771,21 +833,38 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
             int textCol = resolveTextColorForMode(bgColor);
             float w = getWidth(), h = getHeight(), cx = w / 2f;
 
+            // Mirror the real pill's construction exactly, scaled up by text size.
+            // Real pill: 13sp bold text, 14dp horizontal / 6dp vertical padding,
+            // fully rounded corners. Preview draws at 17dp text, so paddings scale
+            // by the same factor — identical proportions at a larger size.
+            final float scale = 17f / 13f;
+            mTextPaint.setTextSize(17 * dp);
+            mTextPaint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            mTextPaint.setTextAlign(Paint.Align.CENTER);
+            Paint.FontMetrics fm = mTextPaint.getFontMetrics();
+            float textH = fm.bottom - fm.top;
+            // The real pill is sized once from measuring "100%" and keeps that
+            // width for all values — so the preview sizes from "100%" too, even
+            // though it displays "75%".
+            float textW = mTextPaint.measureText("100%");
+            float pw = textW  + 2 * 14 * dp * scale;
+            float ph = textH + 2 * 6 * dp * scale;
+
             mFillPaint.setColor(bgColor);
             mFillPaint.setStyle(Paint.Style.FILL);
             mFillPaint.setAlpha(Math.round(mAlpha / 100f * 255));
+            if (mShadow) {
+                mFillPaint.setShadowLayer(8 * dp, 0, 3 * dp, 0x66000000);
+            } else {
+                mFillPaint.clearShadowLayer();
+            }
 
-            float ph = 36 * dp;
-            float pw = Math.min(w * 0.42f, 84 * dp);
             canvas.drawRoundRect(
                     new RectF(cx - pw/2, h/2 - ph/2, cx + pw/2, h/2 + ph/2),
                     ph/2, ph/2, mFillPaint);
 
             mTextPaint.setColor(textCol);
             mTextPaint.setAlpha(Math.round(mAlpha / 100f * 255));
-            mTextPaint.setTextSize(17 * dp);
-            mTextPaint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-            mTextPaint.setTextAlign(Paint.Align.CENTER);
             canvas.drawText("75%", cx,
                     h/2 - (mTextPaint.descent() + mTextPaint.ascent()) / 2f, mTextPaint);
         }

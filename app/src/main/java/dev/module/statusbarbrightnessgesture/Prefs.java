@@ -24,6 +24,7 @@ public final class Prefs {
     public static final String KEY_INDICATOR_ALPHA             = "sbbrightness_indicator_alpha";
     public static final String KEY_INDICATOR_TEXT_COLOR_MODE   = "sbbrightness_indicator_text_color_mode";
     public static final String KEY_INDICATOR_TEXT_CUSTOM_COLOR = "sbbrightness_indicator_text_custom_color";
+    public static final String KEY_INDICATOR_SHADOW            = "sbbrightness_indicator_shadow";
 
     public static final String ACTION_PREFS_CHANGED =
             "dev.module.statusbarbrightnessgesture.PREFS_CHANGED";
@@ -45,6 +46,7 @@ public final class Prefs {
     public static final int DEFAULT_INDICATOR_ALPHA             = 100;
     public static final int DEFAULT_INDICATOR_TEXT_COLOR_MODE   = 0;
     public static final int DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR = 0xFFFFFFFF;
+    public static final int DEFAULT_INDICATOR_SHADOW            = 0;
 
     public static final int SENSITIVITY_MIN    = 1;
     public static final int SENSITIVITY_MAX    = 10;
@@ -108,6 +110,8 @@ public final class Prefs {
                 Settings.Secure.getInt(cr, KEY_INDICATOR_TEXT_COLOR_MODE, DEFAULT_INDICATOR_TEXT_COLOR_MODE));
         i.putExtra(KEY_INDICATOR_TEXT_CUSTOM_COLOR,
                 Settings.Secure.getInt(cr, KEY_INDICATOR_TEXT_CUSTOM_COLOR, DEFAULT_INDICATOR_TEXT_CUSTOM_COLOR));
+        i.putExtra(KEY_INDICATOR_SHADOW,
+                Settings.Secure.getInt(cr, KEY_INDICATOR_SHADOW, DEFAULT_INDICATOR_SHADOW) == 1);
         i.putExtra(KEY_AUTO_BRIGHTNESS,
                 Settings.Secure.getInt(cr, KEY_AUTO_BRIGHTNESS, DEFAULT_AUTO_BRIGHTNESS) == 1);
         i.putExtra(KEY_INDICATOR_Y_POSITION,
