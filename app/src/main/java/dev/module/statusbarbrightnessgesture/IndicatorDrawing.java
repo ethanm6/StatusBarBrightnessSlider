@@ -58,6 +58,30 @@ final class IndicatorDrawing {
     static int dropletHeight(float r) { return Math.round(DROPLET_HEIGHT_FACTOR * r); }
 
     /**
+     * Fill {@code path} with the indicator colour, optionally casting a soft drop
+     * shadow. The shadow is clipped to the region OUTSIDE {@code path}, so it is
+     * never visible through the fill when the indicator's opacity is lowered —
+     * only the fringe that spills past the shape's own outline shows.
+     */
+    private static void fillWithShadow(Canvas canvas, Path path, Paint fill,
+                                       int fillColor, int alpha255,
+                                       boolean shadow, float density) {
+        fill.setStyle(Paint.Style.FILL);
+        fill.setColor(fillColor);
+        fill.setAlpha(alpha255);
+        if (shadow) {
+            int shadowAlpha = Math.round(0x66 * alpha255 / 255f);
+            canvas.save();
+            canvas.clipOutPath(path);   // keep the shadow from sitting behind the fill
+            fill.setShadowLayer(8 * density, 0, 3 * density, shadowAlpha << 24);
+            canvas.drawPath(path, fill);
+            fill.clearShadowLayer();
+            canvas.restore();
+        }
+        canvas.drawPath(path, fill);
+    }
+
+    /**
      * Draw a point-up droplet into the region [pad, pad, w-pad, h-pad] with the
      * value text centred in the bulb. Caller supplies reusable Paints.
      */
@@ -101,16 +125,7 @@ final class IndicatorDrawing {
             path.addCircle(cx, cyB, R, Path.Direction.CW);
         }
 
-        fill.setStyle(Paint.Style.FILL);
-        fill.setColor(fillColor);
-        fill.setAlpha(alpha255);
-        if (shadow) {
-            int shadowAlpha = Math.round(0x66 * alpha255 / 255f);
-            fill.setShadowLayer(8 * density, 0, 3 * density, shadowAlpha << 24);
-        } else {
-            fill.clearShadowLayer();
-        }
-        canvas.drawPath(path, fill);
+        fillWithShadow(canvas, path, fill, fillColor, alpha255, shadow, density);
 
         textPaint.setColor(textColor);
         textPaint.setAlpha(alpha255);
@@ -134,16 +149,9 @@ final class IndicatorDrawing {
         float cx = left + R;
         float cy = top + (bottom - top) / 2f;
 
-        fill.setStyle(Paint.Style.FILL);
-        fill.setColor(fillColor);
-        fill.setAlpha(alpha255);
-        if (shadow) {
-            int shadowAlpha = Math.round(0x66 * alpha255 / 255f);
-            fill.setShadowLayer(8 * density, 0, 3 * density, shadowAlpha << 24);
-        } else {
-            fill.clearShadowLayer();
-        }
-        canvas.drawCircle(cx, cy, R, fill);
+        Path circle = new Path();
+        circle.addCircle(cx, cy, R, Path.Direction.CW);
+        fillWithShadow(canvas, circle, fill, fillColor, alpha255, shadow, density);
 
         textPaint.setColor(textColor);
         textPaint.setAlpha(alpha255);
@@ -237,16 +245,7 @@ final class IndicatorDrawing {
                   ox + 0.55179f*s, oy + 0.03763f*s);
         p.close();
 
-        fill.setStyle(Paint.Style.FILL);
-        fill.setColor(fillColor);
-        fill.setAlpha(alpha255);
-        if (shadow) {
-            int shadowAlpha = Math.round(0x66 * alpha255 / 255f);
-            fill.setShadowLayer(8 * density, 0, 3 * density, shadowAlpha << 24);
-        } else {
-            fill.clearShadowLayer();
-        }
-        canvas.drawPath(p, fill);
+        fillWithShadow(canvas, p, fill, fillColor, alpha255, shadow, density);
 
         textPaint.setColor(textColor);
         textPaint.setAlpha(alpha255);

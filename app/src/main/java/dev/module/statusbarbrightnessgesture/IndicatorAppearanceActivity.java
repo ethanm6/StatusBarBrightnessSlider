@@ -1155,18 +1155,23 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
             mFillPaint.setColor(bgColor);
             mFillPaint.setStyle(Paint.Style.FILL);
             mFillPaint.setAlpha(Math.round(mAlpha / 100f * 255));
+            RectF pill = new RectF(cx - pw/2, h/2 - ph/2, cx + pw/2, h/2 + ph/2);
             if (mShadow) {
                 // The real indicator dims via window alpha, which fades the shadow
                 // together with the pill — mirror that by scaling the shadow alpha.
+                // Clip the shadow to outside the pill so it isn't seen through the
+                // fill once the opacity is lowered.
                 int shadowAlpha = Math.round(0x66 * mAlpha / 100f);
+                Path pillPath = new Path();
+                pillPath.addRoundRect(pill, ph/2, ph/2, Path.Direction.CW);
+                canvas.save();
+                canvas.clipOutPath(pillPath);
                 mFillPaint.setShadowLayer(8 * dp, 0, 3 * dp, shadowAlpha << 24);
-            } else {
+                canvas.drawRoundRect(pill, ph/2, ph/2, mFillPaint);
                 mFillPaint.clearShadowLayer();
+                canvas.restore();
             }
-
-            canvas.drawRoundRect(
-                    new RectF(cx - pw/2, h/2 - ph/2, cx + pw/2, h/2 + ph/2),
-                    ph/2, ph/2, mFillPaint);
+            canvas.drawRoundRect(pill, ph/2, ph/2, mFillPaint);
 
             mTextPaint.setColor(textCol);
             mTextPaint.setAlpha(Math.round(mAlpha / 100f * 255));
