@@ -498,7 +498,7 @@ public class SettingsActivity extends AppCompatActivity {
 
         TextView dv = new TextView(this);
         dv.setText("How strongly the slider favors the dim end — higher gives finer "
-                + "control at low brightness. 1.0 is linear");
+                + "control at low brightness. 1.0 matches the system slider");
         dv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         dv.setTextColor(colOnSurfaceVariant);
         dv.setPadding(0, (int)(3*dp), 0, (int)(6*dp));

@@ -76,6 +76,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             "com.android.systemui.statusbar.phone.PhoneStatusBarView";
     private static final String SHADE_WINDOW_CLASS =
             "com.android.systemui.shade.NotificationShadeWindowView";
+    private static final String BRIGHTNESS_UTILS_CLASS =
+            "com.android.settingslib.display.BrightnessUtils";
     private static final String EDGE_BACK_HANDLER_CLASS =
             "com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler";
     private static final String SYSTEM_GESTURES_LISTENER_CLASS =
@@ -125,9 +127,18 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private Method mSetTemporaryBrightnessMethod;
     private Method mSetBrightnessMethod;
     private Method mGetBrightnessInfoMethod;
+    private Method mConvertGammaToLinearMethod;
 
     private Field mBrightnessMinField;
     private Field mBrightnessMaxField;
+
+    private static final int GAMMA_SPACE_MAX = 65535;
+    // AOSP BrightnessUtils HLG constants — fallback when the ROM's own
+    // convertGammaToLinearFloat can't be reflected.
+    private static final float HLG_R = 0.5f;
+    private static final float HLG_A = 0.17883277f;
+    private static final float HLG_B = 0.28466892f;
+    private static final float HLG_C = 0.55991073f;
 
     // 0 core threads + idle timeout: the worker only lives briefly after a gesture's
     // commitBrightness instead of pinning a thread in SystemUI for the process lifetime.
@@ -175,7 +186,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private volatile int mIndicatorShape        = Prefs.DEFAULT_INDICATOR_SHAPE;
     private volatile int mMainLight             = Prefs.DEFAULT_MAIN_LIGHT;
     private volatile int mMainDark              = Prefs.DEFAULT_MAIN_DARK;
-    // Exponent applied to finger position when mapping to the brightness float. 1.0 = linear.
+    // Exponent applied to finger position in slider-position space, ahead of the
+    // system's own position→brightness curve. 1.0 = matches the QS slider.
     private volatile float mBrightnessCurve     = Prefs.DEFAULT_BRIGHTNESS_CURVE_X10 / 10f;
 
     // ── Fullscreen touch overlay ──────────────────────────────────────────────
@@ -735,6 +747,16 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
             mGetBrightnessInfoMethod = Display.class.getDeclaredMethod("getBrightnessInfo");
             mGetBrightnessInfoMethod.setAccessible(true);
+
+            try {
+                Class<?> bu = Class.forName(
+                        BRIGHTNESS_UTILS_CLASS, false, context.getClassLoader());
+                mConvertGammaToLinearMethod = bu.getMethod(
+                        "convertGammaToLinearFloat", int.class, float.class, float.class);
+                XposedBridge.log(TAG + ": found BrightnessUtils.convertGammaToLinearFloat");
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": BrightnessUtils not found, using HLG fallback");
+            }
 
             readBrightnessRange();
             initIndicator(context);
@@ -1435,13 +1457,31 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 : Math.max(0f, Math.min(1f, (fingerX - mEdgePaddingPx) / usable));
         // Reversed slider: 100% on the left, 0% on the right.
         if (mReverseSlider) fraction = 1f - fraction;
-        // Finger position raised to the curve exponent before mapping to the brightness
-        // float. User-adjustable (Advanced → Brightness curve); 2.2 is the historical
-        // default, 1.0 is linear.
-        float curved = (float) Math.pow(fraction, mBrightnessCurve);
+        // The curve exponent shapes the finger position in slider-position (gamma)
+        // space, and the result goes through the system's own position→brightness
+        // curve — so 1.0 behaves exactly like dragging the QS brightness slider,
+        // higher values add dim-end resolution on top, and ~0.5 approximates the
+        // module's old pow-2.2-into-linear feel.
+        float pos = mBrightnessCurve == 1f
+                ? fraction : (float) Math.pow(fraction, mBrightnessCurve);
         return Math.max(mBrightnessMin,
-                Math.min(mBrightnessMax,
-                        mBrightnessMin + curved * (mBrightnessMax - mBrightnessMin)));
+                Math.min(mBrightnessMax, gammaPositionToLinear(pos)));
+    }
+
+    /** System slider position [0,1] → linear brightness float, via the ROM's own
+     *  BrightnessUtils when available, else the AOSP HLG formula it's built on. */
+    private float gammaPositionToLinear(float pos) {
+        if (mConvertGammaToLinearMethod != null) {
+            try {
+                return (float) mConvertGammaToLinearMethod.invoke(null,
+                        Math.round(pos * GAMMA_SPACE_MAX), mBrightnessMin, mBrightnessMax);
+            } catch (Throwable ignored) {}
+        }
+        float ret = pos <= HLG_R
+                ? (pos / HLG_R) * (pos / HLG_R)
+                : (float) Math.exp((pos - HLG_C) / HLG_A) + HLG_B;
+        float norm = Math.max(0f, Math.min(12f, ret)) / 12f;
+        return mBrightnessMin + norm * (mBrightnessMax - mBrightnessMin);
     }
 
     // ── Hidden API calls ──────────────────────────────────────────────────────

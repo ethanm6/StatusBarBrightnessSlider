@@ -35,8 +35,8 @@ public final class Prefs {
     public static final String KEY_KEEP_GESTURE_ON_AUTO   = "sbbrightness_keep_gesture_on_auto";
     public static final String KEY_SAVED_BRIGHTNESS       = "sbbrightness_saved_brightness";
     public static final String KEY_INDICATOR_Y_POSITION   = "sbbrightness_indicator_y_position";
-    // Exponent applied to the finger-position fraction when mapping to the
-    // brightness float, stored ×10 (22 = the historical hardcoded 2.2).
+    // Exponent applied to the finger-position fraction in slider-position space,
+    // stored ×10 (10 = 1.0 = the system slider's own curve).
     public static final String KEY_BRIGHTNESS_CURVE       = "sbbrightness_brightness_curve";
 
     // Indicator appearance
@@ -91,9 +91,12 @@ public final class Prefs {
     public static final int SENSITIVITY_MAX    = 10;
     public static final int EDGE_PADDING_MAX_DP = 64;
 
-    public static final int DEFAULT_BRIGHTNESS_CURVE_X10 = 22;
-    public static final int BRIGHTNESS_CURVE_MIN_X10     = 10;  // 1.0 = linear
-    public static final int BRIGHTNESS_CURVE_MAX_X10     = 40;  // 4.0
+    // The exponent is applied in slider-position (gamma) space, before the system's
+    // own HLG position→brightness curve. 1.0 therefore matches the QS slider exactly;
+    // 0.5 approximates the module's old pow-2.2-into-linear feel.
+    public static final int DEFAULT_BRIGHTNESS_CURVE_X10 = 10;  // 1.0 = system curve
+    public static final int BRIGHTNESS_CURVE_MIN_X10     = 5;   // 0.5
+    public static final int BRIGHTNESS_CURVE_MAX_X10     = 20;  // 2.0
 
     // Shape constants
     public static final int INDICATOR_SHAPE_PILL     = 0;

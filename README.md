@@ -8,6 +8,7 @@ An LSPosed module that adds a horizontal swipe gesture on the status bar to cont
 - Brightness indicator in your choice of shape (pill, droplet, circle, star) with customizable color (including Material You), opacity, text color, shadow, and vertical position
 - Auto-brightness toggle via in-app switch or Quick Settings tile, with an option to keep the gesture active while auto-brightness is on
 - Saves and restores manual brightness when toggling auto-brightness
+- Adjustable brightness curve — matches the system slider by default, or skew it for finer control at the dim end
 - Configurable sensitivity and edge padding
 - Optional fullscreen swipe support and haptic feedback — brightness swipes don't trigger the back gesture or reveal the status bar
 
