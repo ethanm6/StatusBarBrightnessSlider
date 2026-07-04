@@ -1,6 +1,9 @@
 plugins {
     alias(libs.plugins.android.application)
 }
+base {
+    archivesName.set("brightness-slider")
+}
 android {
     namespace = "dev.module.statusbarbrightnessgesture"
     compileSdk = 35
