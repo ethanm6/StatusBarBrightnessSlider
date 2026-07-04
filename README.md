@@ -18,7 +18,9 @@ An LSPosed module that adds a horizontal swipe gesture on the status bar to cont
 
 ## Download
 
-<a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/ethanm6/status-bar-brightness-slider"><img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="60"></a>
+Get the APK from the [latest release](https://github.com/ethanm6/status-bar-brightness-slider/releases/latest), or add the app to Obtainium for automatic updates:
+
+<a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/ethanm6/status-bar-brightness-slider"><img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="72"></a>
 
 ## Setup
 
