@@ -534,14 +534,44 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         parent.addView(card, cardLp);
     }
 
+    private android.animation.ValueAnimator mPreviewShapeAnim;
+
     private void selectShape(int shape) {
         if (mShape == shape) return;
-        mShape = shape;
         Prefs.setPref(this, Prefs.KEY_INDICATOR_SHAPE, shape);
         for (ShapeTile tile : mShapeTiles) {
             tile.setSelectedState(tile.mShapeId == shape, true);
         }
-        invalidatePreviews();
+        crossfadePreviewToShape(shape);
+    }
+
+    /** Fade the preview indicator out, swap to {@code shape} at the midpoint, fade back in. */
+    private void crossfadePreviewToShape(int shape) {
+        if (mPreviewShapeAnim != null) mPreviewShapeAnim.cancel();
+        final int target = shape;
+        final boolean[] swapped = {false};
+        mPreviewShapeAnim = android.animation.ValueAnimator.ofFloat(0f, 1f);
+        mPreviewShapeAnim.setDuration(400);
+        mPreviewShapeAnim.setInterpolator(
+                new android.view.animation.AccelerateDecelerateInterpolator());
+        mPreviewShapeAnim.addUpdateListener(a -> {
+            float p = (float) a.getAnimatedValue();
+            if (p < 0.5f) {
+                mPreviewView.setAlpha(1f - p * 2f);   // fade the old shape out
+            } else {
+                if (!swapped[0]) { swapped[0] = true; mShape = target; }
+                mPreviewView.setAlpha((p - 0.5f) * 2f); // fade the new shape in
+            }
+            mPreviewView.invalidate();
+        });
+        mPreviewShapeAnim.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(android.animation.Animator a) {
+                mShape = target;
+                mPreviewView.setAlpha(1f);
+                mPreviewView.invalidate();
+            }
+        });
+        mPreviewShapeAnim.start();
     }
 
     /**
