@@ -46,7 +46,6 @@ import android.widget.TextView;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.concurrent.Executors;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -77,16 +76,12 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             "com.android.systemui.statusbar.phone.PhoneStatusBarView";
     private static final String SHADE_WINDOW_CLASS =
             "com.android.systemui.shade.NotificationShadeWindowView";
-    private static final String BRIGHTNESS_UTILS_CLASS =
-            "com.android.settingslib.display.BrightnessUtils";
     private static final String EDGE_BACK_HANDLER_CLASS =
             "com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler";
     private static final String SYSTEM_GESTURES_LISTENER_CLASS =
             "com.android.server.wm.SystemGesturesPointerEventListener";
 
-    private static final int GAMMA_SPACE_MAX = 65535;
     private static final float STATUS_BAR_Y_FRACTION = 0.06f;
-    private static final float GAMMA = 2.2f;
     // Exponent applied to finger position when mapping to the brightness float. 1.0 = linear.
     private static final float BRIGHTNESS_CURVE = 2.2f;
     // Privileged SystemUI window type for the indicator. TYPE_VOLUME_OVERLAY (2020)
@@ -132,14 +127,16 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private Method mSetTemporaryBrightnessMethod;
     private Method mSetBrightnessMethod;
     private Method mGetBrightnessInfoMethod;
-    private Method mConvertLinearToGammaMethod;
 
-    private Field mBrightnessField;
     private Field mBrightnessMinField;
     private Field mBrightnessMaxField;
 
+    // 0 core threads + idle timeout: the worker only lives briefly after a gesture's
+    // commitBrightness instead of pinning a thread in SystemUI for the process lifetime.
     private final java.util.concurrent.ExecutorService mBgExecutor =
-            Executors.newSingleThreadExecutor();
+            new java.util.concurrent.ThreadPoolExecutor(0, 1, 30,
+                    java.util.concurrent.TimeUnit.SECONDS,
+                    new java.util.concurrent.LinkedBlockingQueue<>());
     private Handler mMainHandler;
 
     // ── Indicator ─────────────────────────────────────────────────────────────
@@ -674,9 +671,9 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     // the shade window's top-strip events so the ROM's own re-expansion timer
                     // can't reopen the shade mid-drag. Plain taps (no drag ever starts) are
                     // left alone so they still reach the app underneath.
-                    boolean inTopStrip = ev.getY() <= mScreenHeight * STATUS_BAR_Y_FRACTION;
                     boolean consume = handled || (mSuppressShadeExpand
-                            && (isStatusBarView || (inTopStrip && wasGestureActive)));
+                            && (isStatusBarView || (wasGestureActive
+                                    && ev.getY() <= mScreenHeight * STATUS_BAR_Y_FRACTION)));
                     if (consume) {
                         param.setResult(true);
                     }
@@ -735,16 +732,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             mGetBrightnessInfoMethod = Display.class.getDeclaredMethod("getBrightnessInfo");
             mGetBrightnessInfoMethod.setAccessible(true);
 
-            try {
-                Class<?> bu = Class.forName(
-                        BRIGHTNESS_UTILS_CLASS, false, context.getClassLoader());
-                mConvertLinearToGammaMethod = bu.getMethod(
-                        "convertLinearToGammaFloat", float.class, float.class, float.class);
-                XposedBridge.log(TAG + ": found BrightnessUtils.convertLinearToGammaFloat");
-            } catch (Throwable t) {
-                XposedBridge.log(TAG + ": BrightnessUtils not found, using fallback");
-            }
-
             readBrightnessRange();
             initIndicator(context);
             initFullscreenTouchOverlay(context);
@@ -765,7 +752,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             if (info == null) return;
             Class<?> cls = info.getClass();
             if (mBrightnessMinField == null) {
-                mBrightnessField    = cls.getField("brightness");
                 mBrightnessMinField = cls.getField("brightnessMinimum");
                 mBrightnessMaxField = cls.getField("brightnessMaximum");
             }
@@ -954,7 +940,11 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
             mShadow = shadow; mDensity = density; mPad = pad; mShape = shape;
         }
 
-        void setValue(String v) { mValue = v; invalidate(); }
+        void setValue(String v) {
+            if (v.equals(mValue)) return;
+            mValue = v;
+            invalidate();
+        }
 
         @Override protected void onDraw(Canvas canvas) {
             if (mShape == Prefs.INDICATOR_SHAPE_STAR) {
@@ -974,8 +964,13 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     }
 
     private void setIndicatorValue(String s) {
-        if (mIndicatorTextView != null) mIndicatorTextView.setText(s);
-        else if (mDropletView != null) mDropletView.setValue(s);
+        // Skip the no-op update: setText relayouts (and setValue redraws) even for an
+        // identical string, and this runs on every MOVE event during a drag.
+        if (mIndicatorTextView != null) {
+            if (!s.contentEquals(mIndicatorTextView.getText())) mIndicatorTextView.setText(s);
+        } else if (mDropletView != null) {
+            mDropletView.setValue(s);
+        }
     }
 
     private void reinitIndicator() {
@@ -1087,7 +1082,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         return (0.2126*r + 0.7152*g + 0.0722*b) < 0.35 ? Color.WHITE : Color.BLACK;
     }
 
-    private void showIndicator(float fingerX, float linearBrightness) {
+    private void showIndicator(float fingerX) {
         if (mIndicatorView == null
                 || mWindowManager == null || mMainHandler == null
                 || mIndicatorParams == null) return;
@@ -1118,6 +1113,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         int yOffset = (int)(Math.max(mScreenWidth, mScreenHeight) * mIndicatorYPosition / 100f)
                 - mIndicatorShadowPad;
 
+        boolean xChanged = mIndicatorParams.x != xOffset;
         mIndicatorParams.x = xOffset;
 
         try {
@@ -1145,11 +1141,18 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 startSlideIn(yOffset, targetAlpha);
             } else {
                 if (mHideAnimator != null) { mHideAnimator.cancel(); mHideAnimator = null; }
+                // Only pay the WindowManager IPC when something actually moved; a
+                // stationary finger otherwise costs an updateViewLayout per MOVE event.
+                boolean changed = xChanged;
                 if (!mSlideInAnimating) {
+                    changed |= mIndicatorParams.y != yOffset
+                            || mIndicatorParams.alpha != targetAlpha;
                     mIndicatorParams.y = yOffset;
                     mIndicatorParams.alpha = targetAlpha;
                 }
-                mWindowManager.updateViewLayout(mIndicatorView, mIndicatorParams);
+                if (changed) {
+                    mWindowManager.updateViewLayout(mIndicatorView, mIndicatorParams);
+                }
             }
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": showIndicator failed: " + t);
@@ -1195,22 +1198,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         });
         mSlideInAnimator = anim;
         anim.start();
-    }
-
-    private int linearToDisplayPct(float linear) {
-        try {
-            if (mConvertLinearToGammaMethod != null) {
-                int gammaVal = (int) mConvertLinearToGammaMethod.invoke(
-                        null, linear, mBrightnessMin, mBrightnessMax);
-                return Math.max(0, Math.min(100,
-                        Math.round((float) gammaVal / GAMMA_SPACE_MAX * 100f)));
-            }
-        } catch (Throwable ignored) {}
-        float range = mBrightnessMax - mBrightnessMin;
-        if (range <= 0) return 0;
-        float n = Math.max(0f, Math.min(1f, (linear - mBrightnessMin) / range));
-        return Math.max(0, Math.min(100,
-                Math.round((float) Math.pow(n, 1.0 / GAMMA) * 100f)));
     }
 
     // Suppress ShadeControllerImpl.instantExpandShade while a brightness gesture is in
@@ -1370,9 +1357,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         android.view.HapticFeedbackConstants.GESTURE_START);
             }
         }
-        float brightness = computeBrightness(ev.getX());
-        setTemporaryBrightness(brightness);
-        showIndicator(ev.getX(), brightness);
+        setTemporaryBrightness(computeBrightness(ev.getX()));
+        showIndicator(ev.getX());
         return true;
     }
 
@@ -1457,6 +1443,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
 
     private void setTemporaryBrightness(float brightness) {
         if (mSetTemporaryBrightnessMethod == null) return;
+        if (brightness == mLastTargetBrightness) return;  // no-op — skip the binder call
         try { mSetTemporaryBrightnessMethod.invoke(
                 mDisplayManager, Display.DEFAULT_DISPLAY, brightness); }
         catch (Throwable t) { XposedBridge.log(TAG + ": setTemporaryBrightness: " + t); }
@@ -1470,18 +1457,6 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     mDisplayManager, Display.DEFAULT_DISPLAY, brightness); }
             catch (Throwable t) { XposedBridge.log(TAG + ": setBrightness: " + t); }
         });
-    }
-
-    private float getCurrentBrightness() {
-        try {
-            if (mGetBrightnessInfoMethod == null || mBrightnessField == null) return 0.5f;
-            Display display = mDisplayManager.getDisplay(Display.DEFAULT_DISPLAY);
-            if (display == null) return 0.5f;
-            Object info = mGetBrightnessInfoMethod.invoke(display);
-            if (info == null) return 0.5f;
-            float b = (float) mBrightnessField.get(info);
-            return Math.max(mBrightnessMin, Math.min(mBrightnessMax, b));
-        } catch (Throwable t) { return 0.5f; }
     }
 
     // ── Fullscreen swipe overlay ──────────────────────────────────────────────
@@ -1510,7 +1485,18 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                     PixelFormat.TRANSPARENT);
             params.gravity = Gravity.TOP | Gravity.START;
             probeView.setOnApplyWindowInsetsListener((v, insets) -> {
-                mCachedSbHidden = !insets.isVisible(WindowInsets.Type.statusBars());
+                boolean hidden = !insets.isVisible(WindowInsets.Type.statusBars());
+                if (hidden != mCachedSbHidden) {
+                    mCachedSbHidden = hidden;
+                    // The gesture monitor taps every touchscreen event system-wide, so
+                    // it only exists while an app actually has the bar hidden. Transient
+                    // (peek) bars don't change the inset state, so the monitor stays
+                    // alive through peek mode as before.
+                    if (mFullscreenSwipe) {
+                        if (hidden) initGestureMonitor();
+                        else destroyGestureMonitor();
+                    }
+                }
                 return insets;
             });
             mFullscreenTouchView   = probeView;
@@ -1615,9 +1601,11 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
         if (mFullscreenTouchView == null || mWindowManager == null) return;
         if (mFullscreenSwipe && !mFullscreenTouchAttached) {
             try {
+                // The insets dispatch on attach creates the gesture monitor if the
+                // status bar is already hidden; otherwise it's created on the next
+                // visible→hidden transition.
                 mWindowManager.addView(mFullscreenTouchView, mFullscreenTouchParams);
                 mFullscreenTouchAttached = true;
-                if (mMainHandler != null) mMainHandler.post(this::initGestureMonitor);
             } catch (Throwable t) {
                 XposedBridge.log(TAG + ": fullscreen overlay add failed: " + t);
             }
@@ -1626,6 +1614,8 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                 destroyGestureMonitor();
                 mWindowManager.removeView(mFullscreenTouchView);
                 mFullscreenTouchAttached = false;
+                // Reset so re-enabling detects the hidden state as a fresh transition.
+                mCachedSbHidden = false;
             } catch (Throwable t) {
                 XposedBridge.log(TAG + ": fullscreen overlay remove failed: " + t);
             }

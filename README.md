@@ -25,10 +25,10 @@ An LSPosed module that adds a horizontal swipe gesture on the status bar to cont
 ## Setup
 
 1. Install the APK
-2. Enable the module in LSPosed with scope set to **System UI** and **System Framework**
+2. Enable the module in LSPosed with the scope set to **System UI** and **Android System**
 3. Reboot
 
-The System Framework scope keeps the status bar hidden during fullscreen brightness swipes; everything else works with the System UI scope alone.
+The Android System scope keeps the status bar hidden during fullscreen brightness swipes; everything else works with the System UI scope alone.
 
 No ADB commands or manual permission grants are needed.
 

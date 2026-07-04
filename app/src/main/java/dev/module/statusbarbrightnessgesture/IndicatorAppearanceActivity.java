@@ -513,9 +513,9 @@ public class IndicatorAppearanceActivity extends AppCompatActivity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setPadding((int)(12*dp), (int)(12*dp), (int)(12*dp), (int)(12*dp));
 
-        String[] names = {"Pill", "Droplet", "Circle", "Star"};
-        int[] shapes = {Prefs.INDICATOR_SHAPE_PILL, Prefs.INDICATOR_SHAPE_DROPLET,
-                Prefs.INDICATOR_SHAPE_CIRCLE, Prefs.INDICATOR_SHAPE_STAR};
+        String[] names = {"Pill", "Circle", "Droplet", "Star"};
+        int[] shapes = {Prefs.INDICATOR_SHAPE_PILL, Prefs.INDICATOR_SHAPE_CIRCLE,
+                Prefs.INDICATOR_SHAPE_DROPLET, Prefs.INDICATOR_SHAPE_STAR};
         mShapeTiles = new ShapeTile[shapes.length];
         for (int i = 0; i < shapes.length; i++) {
             final int shape = shapes[i];
