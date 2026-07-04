@@ -39,4 +39,4 @@ Licensed under the **GNU General Public License v3.0 or later** (GPL-3.0-or-late
 ## Credits
 
 - Based on [StatusBarBrightnessGesture](https://github.com/mbatthew/StatusBarBrightnessGesture) by mbatthew, originally licensed under the MIT License — see [LICENSE-MIT](LICENSE-MIT).
-- Launcher icon adapted from [Lawnicons](https://github.com/LawnchairLauncher/lawnicons) by the Lawnchair team, licensed under Apache-2.0.
+- Launcher and Quick Settings tile icons adapted from [Lawnicons](https://github.com/LawnchairLauncher/lawnicons) by the Lawnchair team, licensed under the Apache License 2.0 — see [LICENSE-APACHE](LICENSE-APACHE).
