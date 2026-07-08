@@ -287,10 +287,15 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     // gesture monitor does not cancel it, so a fullscreen brightness swipe with a
     // little downward drift still slid the bar in. This hook runs in the "android"
     // (system framework) scope and blinds that listener to a top-strip stream once
-    // it turns horizontal-dominant under the SAME activation rule the brightness
-    // gesture uses (slop + ratio from the sensitivity pref, read from
-    // Settings.Secure). Blinding starts mid-stream, never at DOWN, so a plain
-    // vertical swipe-from-top still reveals the bars normally.
+    // it turns horizontal-dominant. The dominance RATIO matches the brightness
+    // activation rule (from the sensitivity pref), but the slop is just the touch
+    // slop — much smaller than the activation slop — because the reveal detector
+    // fires after only ~a bar-height of downward travel: waiting for the full
+    // activation slop let a swipe with early downward drift reveal the bar before
+    // the blind engaged. With the same ratio at a smaller slop, the blind always
+    // engages at or before the moment the brightness gesture activates. Blinding
+    // starts mid-stream, never at DOWN, so a plain vertical swipe-from-top still
+    // reveals the bars normally.
 
     private long mSysTrackDownTime = -1;   // top-strip stream being watched
     private long mSysBlindDownTime = -1;   // stream claimed by the brightness gesture
@@ -300,6 +305,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
     private long mSysPrefsReadAt = -1;
     private boolean mSysEnabled;
     private float mSysSlopPx = 48f;
+    private float mSysEarlySlopPx = 24f;
     private float mSysRatio = 2.0f;
 
     private void hookSystemGestures(ClassLoader classLoader, Method hookMethodFn) {
@@ -327,7 +333,7 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                                 && ev.getDownTime() == mSysTrackDownTime) {
                             float dx = Math.abs(ev.getX() - mSysDownX);
                             float dy = Math.abs(ev.getY() - mSysDownY);
-                            if (dx > mSysSlopPx && dx > dy * mSysRatio) {
+                            if (dx > mSysEarlySlopPx && dx > dy * mSysRatio) {
                                 // The brightness gesture claims this stream; hide the
                                 // rest of it from the swipe-from-top detector.
                                 mSysBlindDownTime = mSysTrackDownTime;
@@ -389,10 +395,10 @@ public class BrightnessGestureHook implements IXposedHookLoadPackage {
                         Settings.Secure.getInt(cr,
                             Prefs.KEY_SENSITIVITY, Prefs.DEFAULT_SENSITIVITY)));
                 float density = mSysContext.getResources().getDisplayMetrics().density;
-                float baseSlop = Math.max(
-                        ViewConfiguration.get(mSysContext).getScaledTouchSlop(),
-                        12f * density);
+                float touchSlop = ViewConfiguration.get(mSysContext).getScaledTouchSlop();
+                float baseSlop = Math.max(touchSlop, 12f * density);
                 mSysSlopPx = baseSlop + (10 - s) * 8f * density;
+                mSysEarlySlopPx = Math.max(touchSlop, 8f * density);
                 mSysRatio = 1.5f + (10 - s) * 0.25f;
             } catch (Throwable t) {
                 mSysEnabled = false;

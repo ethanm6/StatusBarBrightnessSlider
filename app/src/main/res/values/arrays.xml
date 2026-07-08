@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Recommended LSPosed scope. "android" (system framework) is needed to blind
-         system_server's swipe-from-top detector during fullscreen brightness swipes. -->
+    <!-- Recommended LSPosed scope. The system framework entry is needed to blind
+         system_server's swipe-from-top detector during fullscreen brightness swipes;
+         official LSPosed names it "android", some forks name it "system" — declare
+         both, each manager ignores the one it doesn't know. -->
     <string-array name="xposedscope">
         <item>com.android.systemui</item>
         <item>system</item>
+        <item>android</item>
     </string-array>
 </resources>
