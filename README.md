@@ -33,6 +33,12 @@ The framework scope keeps the status bar hidden during fullscreen brightness swi
 
 No ADB commands or manual permission grants are needed.
 
+## Support
+
+If you find this project useful, you can support development:
+
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/ethanm6)
+
 ## License
 
 Licensed under the **GNU General Public License v3.0 or later** (GPL-3.0-or-later) — see [LICENSE](LICENSE).
